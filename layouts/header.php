@@ -96,6 +96,80 @@
         #overlay, .overlay, .sidebar-backdrop, .offcanvas-backdrop { z-index: 1040 !important; }
 
 
+        /* Live Clock Topbar Global */
+        .mobile-brand {
+            display: none;
+            font-weight: 800;
+            color: var(--simpers-primary);
+            letter-spacing: 0.8px;
+            font-size: 1rem;
+            line-height: 1;
+        }
+        .topbar-clock {
+            text-align: right;
+            line-height: 1.1;
+            padding-right: 14px;
+            margin-right: 14px;
+            border-right: 1px solid #eef2f7;
+            min-width: 150px;
+        }
+        .topbar-clock-date {
+            font-size: 0.72rem;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+        .topbar-clock-time {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--simpers-primary);
+            letter-spacing: 1px;
+            white-space: nowrap;
+        }
+        @media (max-width: 767.98px) {
+            .topbar {
+                height: 58px;
+                padding: 0 12px;
+                gap: 10px;
+            }
+            .mobile-brand {
+                display: block;
+                flex: 1;
+                text-align: left;
+                margin-left: 2px;
+            }
+            .topbar-clock {
+                min-width: auto;
+                margin-right: 10px;
+                padding: 6px 10px;
+                border-right: none;
+                border-radius: 999px;
+                background: #eef4fb;
+                box-shadow: inset 0 0 0 1px rgba(74,112,169,.08);
+            }
+            .topbar-clock-date {
+                display: none;
+            }
+            .topbar-clock-time {
+                font-size: 0.82rem;
+                letter-spacing: .4px;
+                line-height: 1;
+            }
+            .topbar .btn.btn-light {
+                width: 38px;
+                height: 38px;
+                padding: 0;
+                border-radius: 12px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .topbar img.rounded-circle {
+                width: 36px !important;
+                height: 36px !important;
+            }
+        }
+
+
         /* Perbaikan Tabel Responsive yang bisa scroll di dalam halaman konten */
         .table-responsive { 
             max-height: 65vh; 
@@ -117,12 +191,18 @@
                 <button class="btn btn-light d-lg-none shadow-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebarMobile">
                     <i class="fa-solid fa-bars text-simpers"></i>
                 </button>
+
+                <div class="mobile-brand">SIMPERS</div>
                 
                 <div class="d-none d-lg-block fw-bold text-muted">
                     Sistem Informasi Manajemen Persuratan
                 </div>
 
-                <div class="d-flex align-items-center">
+                <div class="d-flex align-items-center ms-auto">
+                    <div class="topbar-clock">
+                        <div class="topbar-clock-date" id="topbarLiveDate">Memuat tanggal...</div>
+                        <div class="topbar-clock-time" id="topbarLiveTime">--:--:--</div>
+                    </div>
                     <div class="dropdown">
                         <a class="text-decoration-none text-dark dropdown-toggle d-flex align-items-center" href="#" role="button" data-bs-toggle="dropdown">
                             <div class="me-2 text-end d-none d-sm-block">
@@ -179,6 +259,28 @@
             <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+    // 0. FUNGSI LIVE CLOCK TOPBAR GLOBAL
+    function updateTopbarClock() {
+        const now = new Date();
+        const dateEl = document.getElementById('topbarLiveDate');
+        const timeEl = document.getElementById('topbarLiveTime');
+
+        const tanggal = now.toLocaleDateString('id-ID', {
+            weekday: 'long',
+            day: '2-digit',
+            month: 'long',
+            year: 'numeric'
+        });
+
+        const timeParts = [now.getHours(), now.getMinutes(), now.getSeconds()]
+            .map(n => String(n).padStart(2, '0'));
+        const isMobile = window.matchMedia('(max-width: 767.98px)').matches;
+        const jam = isMobile ? timeParts.slice(0, 2).join(':') : timeParts.join(':');
+
+        if (dateEl) dateEl.textContent = tanggal;
+        if (timeEl) timeEl.textContent = jam;
+    }
+
     // 1. FUNGSI PREVIEW PDF VIA IFRAME
     function bukaPreviewPDF(namaFile) {
         var viewerUrl = "https://simpers.42web.io/vendor/pdfjs/web/viewer.html";
@@ -258,7 +360,69 @@
         }
     }
 
-    // 5. FUNGSI UPDATE DATA REALTIME VIA AJAX JQUERY
+    // 5. FUNGSI UPDATE BADGE SIDEBAR REALTIME
+    function formatSidebarBadgeValue(value) {
+        const numberValue = Number(value) || 0;
+        return numberValue > 99 ? '99+' : String(numberValue);
+    }
+
+    function setSidebarBadge(key, value) {
+        const numberValue = Number(value) || 0;
+        const badges = document.querySelectorAll('[data-sidebar-badge="' + key + '"]');
+
+        badges.forEach(function(badge) {
+            if (numberValue > 0) {
+                badge.textContent = formatSidebarBadgeValue(numberValue);
+                badge.style.display = 'inline-block';
+                badge.setAttribute('aria-label', numberValue + ' tugas aktif');
+            } else {
+                badge.textContent = '';
+                badge.style.display = 'none';
+                badge.removeAttribute('aria-label');
+            }
+        });
+    }
+
+    function applySidebarBadges(data) {
+        if (!data || !data.badges) return;
+
+        setSidebarBadge('surat_masuk', data.badges.surat_masuk);
+        setSidebarBadge('surat_keluar', data.badges.surat_keluar);
+        setSidebarBadge('disposisi', data.badges.disposisi);
+    }
+
+    function fetchSidebarBadges(urlList, index) {
+        if (!urlList[index]) return;
+
+        fetch(urlList[index], {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store'
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(function(data) {
+            if (data && data.success) {
+                applySidebarBadges(data);
+            }
+        })
+        .catch(function(error) {
+            if (index + 1 < urlList.length) {
+                fetchSidebarBadges(urlList, index + 1);
+            } else {
+                console.log('Sidebar badge sync failed:', error.message);
+            }
+        });
+    }
+
+    function updateSidebarBadges() {
+        // Dua path dipakai agar tetap aman saat halaman berada di root maupun subfolder modul.
+        fetchSidebarBadges(['../api_sidebar.php', './api_sidebar.php'], 0);
+    }
+
+    // 6. FUNGSI UPDATE DATA REALTIME VIA AJAX JQUERY
     function globalRealtimeUpdate() {
         // Pastikan jQuery ($) sudah siap sebelum dijalankan
         if (typeof $ !== 'undefined') {
@@ -273,12 +437,7 @@
                         if(response.stats.val_b !== undefined) $('#stat-val-b').text(response.stats.val_b);
                         if(response.stats.val_c !== undefined) $('#stat-val-c').text(response.stats.val_c);
 
-                        // Update Badge Notifikasi di Navbar
-                        if(response.stats.val_b > 0) {
-                            $('#nav-badge-disposisi').text(response.stats.val_b).show();
-                        } else {
-                            $('#nav-badge-disposisi').hide();
-                        }
+                        // Badge sidebar sekarang disinkronkan oleh updateSidebarBadges().
                     }
                 },
                 error: function() { 
@@ -288,16 +447,22 @@
         }
     }
 
-    // 6. INISIALISASI UTAMA SAAT HALAMAN SELESAI DIMUAT
+    // 7. INISIALISASI UTAMA SAAT HALAMAN SELESAI DIMUAT
     $(document).ready(function() {
+        // Jalankan live clock topbar global
+        updateTopbarClock();
+        setInterval(updateTopbarClock, 1000);
+
         // Jalankan fungsi notifikasi Android dengan aman di dalam document ready
         kirimNotifKeApp();
 
         // Jalankan sinkronisasi realtime pertama kali
         globalRealtimeUpdate();
+        updateSidebarBadges();
 
         // Ulangi realtime sync setiap 15 detik
-        setInterval(globalRealtimeUpdate, 15000); 
+        setInterval(globalRealtimeUpdate, 15000);
+        setInterval(updateSidebarBadges, 15000); 
     });
     
 </script>

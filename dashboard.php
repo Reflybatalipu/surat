@@ -10,6 +10,24 @@ $role    = $_SESSION['nama_role'] ?? '';
 $user_id = (int)($_SESSION['user_id'] ?? 0);
 
 $stat = [];
+
+function render_empty_state($icon, $title, $desc = '') {
+    $safe_icon  = htmlspecialchars($icon);
+    $safe_title = htmlspecialchars($title);
+    $safe_desc  = htmlspecialchars($desc);
+
+    echo "<div class='empty-state'>
+            <div class='empty-illustration'>
+                <i class='fa-solid {$safe_icon}'></i>
+            </div>
+            <div class='empty-title'>{$safe_title}</div>";
+
+    if ($safe_desc !== '') {
+        echo "<div class='empty-desc'>{$safe_desc}</div>";
+    }
+
+    echo "</div>";
+}
 // ════════════════════════════════════════════════════════════
 //  STATISTIK KARTU — berbeda per role (POV-based)
 // ════════════════════════════════════════════════════════════
@@ -106,23 +124,24 @@ for ($i = 5; $i >= 0; $i--) {
     $thn2 = date('y', strtotime("-$i months"));
     $label_bulan[] = $nama_bulan_indo[(int)$bln - 1] . " '" . $thn2;
 
-    if ($role == 'Admin_TU' || $role == 'Kepala_Sekolah') {
+    if ($role == 'Admin_TU' || $role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') {
         $r = mysqli_query($koneksi, "SELECT COUNT(id) as t FROM surat_masuk  WHERE MONTH(created_at)='$bln' AND YEAR(created_at)='$thn' AND deleted_at IS NULL");
         $grafik_masuk[]  = $r ? (int)mysqli_fetch_assoc($r)['t'] : 0;
         $r = mysqli_query($koneksi, "SELECT COUNT(id) as t FROM surat_keluar WHERE MONTH(created_at)='$bln' AND YEAR(created_at)='$thn' AND deleted_at IS NULL");
         $grafik_keluar[] = $r ? (int)mysqli_fetch_assoc($r)['t'] : 0;
     } else {
-       $r = mysqli_query($koneksi, "SELECT COUNT(id) as t FROM disposisi WHERE ke_user_id='$user_id'");
-        $grafik_masuk[]  = $r ? (int)mysqli_fetch_assoc($r)['t'] : 0;
+        $r = mysqli_query($koneksi, "SELECT COUNT(d.id) as t FROM disposisi d JOIN surat_masuk sm ON d.surat_id = sm.id WHERE d.ke_user_id='$user_id' AND MONTH(d.acted_at)='$bln' AND YEAR(d.acted_at)='$thn' AND sm.deleted_at IS NULL");
+		$grafik_masuk[] = $r ? (int)mysqli_fetch_assoc($r)['t'] : 0;
         
         $r = mysqli_query($koneksi, "SELECT COUNT(id) as t FROM surat_keluar WHERE draft_by='$user_id' AND MONTH(created_at)='$bln' AND YEAR(created_at)='$thn' AND deleted_at IS NULL");
-        $grafik_keluar[] = $r ? (int)mysqli_fetch_assoc($r)['t'] : 0;
+        $grafik_keluar[] = $r ? (int)mysqli_fetch_assoc($r)['t'] : 0; 
     }
 }
 
 // Label grafik berdasarkan role
-$grafik_label_masuk  = ($role == 'Admin_TU' || $role == 'Kepala_Sekolah') ? 'Surat Masuk' : 'Disposisi Masuk';
-$grafik_label_keluar = ($role == 'Admin_TU' || $role == 'Kepala_Sekolah') ? 'Surat Keluar' : 'Surat Keluar Saya';
+$grafik_label_masuk  = ($role == 'Admin_TU' || $role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') ? 'Surat Masuk' : 'Disposisi Masuk';
+$grafik_label_keluar = ($role == 'Admin_TU' || $role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') ? 'Surat Keluar' : 'Surat Keluar Saya';
+$grafik_total_data   = array_sum($grafik_masuk) + array_sum($grafik_keluar);
 
 // ════════════════════════════════════════════════════════════
 //  AKTIVITAS TERBARU — privasi per role
@@ -171,7 +190,7 @@ if ($role == 'Admin_TU') {
                                              WHERE d.ke_user_id = '$user_id' AND sm.deleted_at IS NULL
                                              ORDER BY d.id DESC LIMIT 5");
     $judul_sm = 'Disposisi Masuk ke Anda';
-    $show_sm  = ($q_sm_terbaru && mysqli_num_rows($q_sm_terbaru) > 0);
+    $show_sm  = true;
 }
 // ── OCR Pending ──
 $q_pending_ocr = mysqli_query($koneksi, "SELECT id FROM surat_masuk WHERE status_ocr='processing'");
@@ -179,11 +198,32 @@ $pending_ids = [];
 while($row = mysqli_fetch_assoc($q_pending_ocr)) $pending_ids[] = $row['id'];
 
 // ── Surat keluar menunggu persetujuan (untuk Kepsek) ──
-if ($role == 'Kepala_Sekolah') {
+$sk_urgent_count = 0;
+$sk_urgent_oldest = null;
+$q_sk_urgent = false;
+if ($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') {
     $q_sk_pending = mysqli_query($koneksi, "SELECT sk.nomor_surat, sk.perihal, sk.status_workflow, sk.created_at, u.nama_lengkap as pembuat
                                              FROM surat_keluar sk LEFT JOIN users u ON sk.draft_by=u.id
                                              WHERE sk.status_workflow='Review' AND sk.deleted_at IS NULL
                                              ORDER BY sk.id DESC LIMIT 5");
+
+    $q_sk_urgent_count = mysqli_query($koneksi, "SELECT COUNT(id) as t, MIN(created_at) as oldest_review
+                                                  FROM surat_keluar
+                                                  WHERE status_workflow='Review'
+                                                  AND deleted_at IS NULL
+                                                  AND created_at <= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+    if ($q_sk_urgent_count) {
+        $urgent_row = mysqli_fetch_assoc($q_sk_urgent_count);
+        $sk_urgent_count  = (int)($urgent_row['t'] ?? 0);
+        $sk_urgent_oldest = $urgent_row['oldest_review'] ?? null;
+    }
+
+    $q_sk_urgent = mysqli_query($koneksi, "SELECT sk.nomor_surat, sk.perihal, sk.created_at, u.nama_lengkap as pembuat
+                                           FROM surat_keluar sk LEFT JOIN users u ON sk.draft_by=u.id
+                                           WHERE sk.status_workflow='Review'
+                                           AND sk.deleted_at IS NULL
+                                           AND sk.created_at <= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                                           ORDER BY sk.created_at ASC LIMIT 3");
 }
 
 include 'layouts/header.php';
@@ -327,6 +367,45 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
 .urgency-medium { border-left: 3px solid var(--amber); }
 .urgency-normal { border-left: 3px solid var(--border); }
 
+/* ── Urgent Banner ── */
+.urgent-banner {
+    background: linear-gradient(135deg, #b91c1c 0%, #ef4444 100%);
+    border-radius: 14px; padding: 16px 20px; margin-bottom: 20px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    color: #fff; box-shadow: 0 8px 26px rgba(185,28,28,.18);
+}
+.urgent-banner .ub-left { display: flex; gap: 14px; align-items: flex-start; }
+.urgent-banner .ub-icon { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.urgent-banner .ub-title { font-weight: 800; margin-bottom: 2px; }
+.urgent-banner .ub-desc { font-size: .84rem; color: rgba(255,255,255,.82); margin: 0; }
+.urgent-banner .ub-list { margin: 8px 0 0; padding-left: 18px; font-size: .78rem; color: rgba(255,255,255,.84); }
+.urgent-banner .ub-action { background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.28); color: #fff; border-radius: 10px; padding: 8px 14px; text-decoration: none; font-size: .78rem; font-weight: 700; white-space: nowrap; }
+.urgent-banner .ub-action:hover { background: rgba(255,255,255,.25); color: #fff; }
+
+/* ── Empty State ── */
+.empty-state { padding: 34px 20px; text-align: center; color: var(--ink-muted); }
+.empty-illustration { width: 72px; height: 72px; margin: 0 auto 12px; border-radius: 22px; background: linear-gradient(135deg, #f8fafc, #eaf0f8); display: flex; align-items: center; justify-content: center; color: var(--sage); font-size: 1.8rem; border: 1px solid var(--border); }
+.empty-title { font-weight: 800; color: var(--ink); font-size: .95rem; margin-bottom: 4px; }
+.empty-desc { font-size: .8rem; max-width: 420px; margin: 0 auto; }
+
+/* ── Skeleton Loader per komponen ── */
+.dashboard-page.dashboard-loading .real-content { opacity: 0; }
+.dashboard-page:not(.dashboard-loading) .skeleton-shell { display: none; }
+.skeleton-host { position: relative; }
+.skeleton-shell { position: absolute; inset: 0; z-index: 5; background: var(--surface); border-radius: inherit; padding: 18px; pointer-events: none; }
+.skeleton-line, .skeleton-block, .skeleton-circle { background: linear-gradient(90deg, #eef2f7 25%, #f8fafc 37%, #eef2f7 63%); background-size: 400% 100%; animation: shimmer 1.15s ease infinite; }
+.skeleton-line { height: 12px; border-radius: 999px; margin-bottom: 10px; }
+.skeleton-block { height: 48px; border-radius: 12px; margin-bottom: 12px; }
+.skeleton-circle { width: 42px; height: 42px; border-radius: 14px; margin-bottom: 14px; }
+.skeleton-card .skeleton-line:nth-child(3) { width: 72%; }
+.skeleton-card .skeleton-line:nth-child(4) { width: 48%; }
+.skeleton-panel .skeleton-block { height: 170px; }
+.skeleton-list-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.skeleton-list-row .skeleton-circle { width: 36px; height: 36px; margin: 0; }
+.skeleton-list-row .skeleton-lines { flex: 1; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@media (max-width: 575.98px) { .urgent-banner { flex-direction: column; } .urgent-banner .ub-action { width: 100%; text-align: center; } }
+
 /* ── Fade-up Animations ── */
 .fade-up { opacity: 0; transform: translateY(16px); animation: fadeUp .45s ease forwards; }
 @keyframes fadeUp { to { opacity: 1; transform: none; } }
@@ -334,6 +413,8 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
 .delay-3 { animation-delay: .15s; } .delay-4 { animation-delay: .20s; }
 .delay-5 { animation-delay: .25s; } .delay-6 { animation-delay: .30s; }
 </style>
+
+<div id="dashboardPage" class="dashboard-page dashboard-loading">
 
 <!-- ═══════════════════════════════════════════════════════════
      HERO HEADER
@@ -344,7 +425,7 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
             <?php
             $pov_label = match($role) {
                 'Admin_TU'       => 'Admin TU',
-                'Kepala_Sekolah' => 'Kepala Sekolah',
+                'Kepala_Sekolah', 'Kepala Sekolah' => 'Kepala Sekolah',
                 default          => '' . htmlspecialchars($_SESSION['nama_role'])
             };
             ?>
@@ -363,7 +444,7 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
                 <?php
                 echo match($role) {
                     'Admin_TU'       => 'Pantau seluruh lalu lintas surat dan aktivitas sistem hari ini.',
-                    'Kepala_Sekolah' => 'Berikut adalah agenda surat yang membutuhkan keputusan Anda.',
+                    'Kepala_Sekolah', 'Kepala Sekolah' => 'Berikut adalah agenda surat yang membutuhkan keputusan Anda.',
                     default          => 'Berikut adalah ringkasan aktivitas persuratan Anda hari ini.',
                 };
                 ?>
@@ -376,11 +457,41 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
     </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════
+     KEPALA SEKOLAH — Urgent Review > 24 Jam
+════════════════════════════════════════════════════════════ -->
+<?php if (($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') && $sk_urgent_count > 0): ?>
+<div class="urgent-banner fade-up delay-1">
+    <div class="ub-left">
+        <div class="ub-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <div>
+            <div class="ub-title"><?= $sk_urgent_count ?> surat keluar Review melewati 24 jam</div>
+            <p class="ub-desc">
+                Ada surat keluar yang sudah terlalu lama menunggu persetujuan. Mohon prioritaskan pemeriksaan agar alur surat tidak tertahan.
+                <?php if (!empty($sk_urgent_oldest)): ?>
+                    Review tertua sejak <?= date('d M Y H:i', strtotime($sk_urgent_oldest)) ?>.
+                <?php endif; ?>
+            </p>
+            <?php if ($q_sk_urgent && mysqli_num_rows($q_sk_urgent) > 0): ?>
+            <ul class="ub-list">
+                <?php while($urgent = mysqli_fetch_assoc($q_sk_urgent)): ?>
+                    <li><?= htmlspecialchars($urgent['nomor_surat']) ?> — <?= htmlspecialchars($urgent['perihal']) ?></li>
+                <?php endwhile; ?>
+            </ul>
+            <?php endif; ?>
+        </div>
+    </div>
+    <a class="ub-action" href="modul_surat_keluar/surat_keluar.php">
+        Review Sekarang <i class="fa-solid fa-arrow-right ms-1"></i>
+    </a>
+</div>
+<?php endif; ?>
+
 
 <!-- ═══════════════════════════════════════════════════════════
      GURU/STAFF — Privacy Notice
 ════════════════════════════════════════════════════════════ -->
-<?php if ($role !== 'Admin_TU' && $role !== 'Kepala_Sekolah'): ?>
+<?php if ($role !== 'Admin_TU' && $role !== 'Kepala_Sekolah' && $role !== 'Kepala Sekolah'): ?>
 <div class="privacy-notice fade-up delay-1 mb-4">
     <i class="fa-solid fa-lock text-slate-400"></i>
     Data yang ditampilkan hanya mencakup aktivitas persuratan Anda sendiri.
@@ -401,12 +512,20 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
     foreach($cards as [$key, $theme, $icon, $val, $label, $sub]):
     ?>
     <div class="col-6 col-lg-3">
-        <div class="stat-card <?= $theme ?>">
+        <div class="stat-card <?= $theme ?> skeleton-host">
+            <div class="skeleton-shell skeleton-card">
+                <div class="skeleton-circle"></div>
+                <div class="skeleton-line" style="width:42%;height:28px;"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line"></div>
+            </div>
+            <div class="real-content">
             <div class="accent-bar"></div>
             <div class="stat-icon"><i class="fa-solid <?= $icon ?>"></i></div>
             <div class="stat-num"><?= number_format($val) ?></div>
             <div class="stat-label"><?= $label ?></div>
             <div class="stat-sub text-muted"><?= $sub ?></div>
+            </div>
         </div>
     </div>
     <?php endforeach; ?>
@@ -419,14 +538,14 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
 
     <!-- GRAFIK -->
     <div class="col-12 col-lg-7">
-        <div class="panel fade-up delay-3 h-100">
+        <div class="panel fade-up delay-3 h-100 skeleton-host">
             <div class="panel-header">
                 <span class="panel-title">
                     <i class="fa-solid fa-chart-column me-2" style="color:var(--sage);"></i>
                     <?php
                     echo match($role) {
                         'Admin_TU'       => 'Volume Surat — 6 Bulan Terakhir',
-                        'Kepala_Sekolah' => 'Tren Surat Institusi — 6 Bulan',
+                        'Kepala_Sekolah', 'Kepala Sekolah' => 'Tren Surat Institusi — 6 Bulan',
                         default          => 'Aktivitas Surat Saya — 6 Bulan',
                     };
                     ?>
@@ -435,41 +554,63 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
                     <?= date('M Y') ?>
                 </span>
             </div>
-            <div class="panel-body">
-                <?php if ($role !== 'Admin_TU' && $role !== 'Kepala_Sekolah'): ?>
+            <div class="skeleton-shell skeleton-panel">
+                <div class="skeleton-line" style="width:45%;"></div>
+                <div class="skeleton-block"></div>
+                <div class="skeleton-line" style="width:70%;"></div>
+            </div>
+            <div class="panel-body real-content">
+                <?php if ($role !== 'Admin_TU' && $role !== 'Kepala_Sekolah' && $role !== 'Kepala Sekolah'): ?>
                 <div class="privacy-notice mb-3">
                     <i class="fa-solid fa-user-shield"></i>
                     Grafik menampilkan disposisi masuk dan surat keluar milik Anda saja.
                 </div>
                 <?php endif; ?>
+                <?php if ($grafik_total_data > 0): ?>
                 <canvas id="chartSurat" height="200"></canvas>
+                <?php else: ?>
+                <?php render_empty_state('chart-column', 'Belum ada data grafik', 'Belum ada aktivitas surat atau disposisi pada rentang 6 bulan terakhir.'); ?>
+                <canvas id="chartSurat" height="200" style="display:none;"></canvas>
+                <?php endif; ?>
             </div>
         </div>
     </div>
 
     <!-- AKTIVITAS TERBARU -->
     <div class="col-12 col-lg-5">
-        <div class="panel fade-up delay-4 h-100">
+        <div class="panel fade-up delay-4 h-100 skeleton-host">
             <div class="panel-header">
                 <span class="panel-title">
                     <i class="fa-solid fa-clock-rotate-left me-2" style="color:var(--amber);"></i>
                     <?php
                     echo match($role) {
                         'Admin_TU'       => 'Aktivitas Sistem Terbaru',
-                        'Kepala_Sekolah' => 'Aktivitas Surat Relevan',
+                        'Kepala_Sekolah', 'Kepala Sekolah' => 'Aktivitas Surat Relevan',
                         default          => 'Aktivitas Saya',
                     };
                     ?>
                 </span>
-                <?php if ($role !== 'Admin_TU' && $role !== 'Kepala_Sekolah'): ?>
+                <?php if ($role !== 'Admin_TU' && $role !== 'Kepala_Sekolah' && $role !== 'Kepala Sekolah'): ?>
                 <span style="font-size:.72rem;color:var(--ink-muted);display:flex;align-items:center;gap:4px;">
                     <i class="fa-solid fa-lock" style="font-size:.65rem;"></i> Privat
                 </span>
                 <?php endif; ?>
             </div>
 
+            <div class="skeleton-shell skeleton-list">
+                <?php for($i=0;$i<5;$i++): ?>
+                <div class="skeleton-list-row">
+                    <div class="skeleton-circle"></div>
+                    <div class="skeleton-lines">
+                        <div class="skeleton-line" style="width:68%;"></div>
+                        <div class="skeleton-line" style="width:42%;"></div>
+                    </div>
+                </div>
+                <?php endfor; ?>
+            </div>
+            <div class="real-content">
             <?php
-            if(mysqli_num_rows($q_recent) > 0) {
+            if($q_recent && mysqli_num_rows($q_recent) > 0) {
                 while($act = mysqli_fetch_array($q_recent)) {
                     $action_upper = strtoupper($act['action'] ?? '');
 
@@ -509,9 +650,10 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
                     </div>";
                 }
             } else {
-                echo "<div class='py-4 text-center' style='color:var(--ink-muted);font-size:.85rem;'>Belum ada aktivitas tercatat.</div>";
+                render_empty_state('clock-rotate-left', 'Belum ada aktivitas', 'Aktivitas akan muncul setelah ada perubahan data pada sistem.');
             }
             ?>
+            </div>
         </div>
     </div>
 </div>
@@ -520,10 +662,10 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
      SURAT MASUK TERBARU / PERLU KEPUTUSAN
 ════════════════════════════════════════════════════════════ -->
 <?php if ($show_sm): ?>
-<div class="panel fade-up delay-5 mb-4">
+<div class="panel fade-up delay-5 mb-4 skeleton-host">
     <div class="panel-header">
         <span class="panel-title">
-            <?php if ($role == 'Kepala_Sekolah'): ?>
+            <?php if ($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah'): ?>
                 <i class="fa-solid fa-inbox me-2" style="color:var(--coral);"></i>
             <?php elseif ($role == 'Admin_TU'): ?>
                 <i class="fa-solid fa-envelope-open-text me-2" style="color:var(--sage);"></i>
@@ -538,6 +680,21 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
         </a>
     </div>
 
+    <div class="skeleton-shell skeleton-list">
+        <?php for($i=0;$i<4;$i++): ?>
+        <div class="skeleton-list-row">
+            <div class="skeleton-lines" style="flex:0 0 155px;">
+                <div class="skeleton-line" style="width:90%;"></div>
+                <div class="skeleton-line" style="width:55%;"></div>
+            </div>
+            <div class="skeleton-lines">
+                <div class="skeleton-line" style="width:82%;"></div>
+                <div class="skeleton-line" style="width:48%;"></div>
+            </div>
+        </div>
+        <?php endfor; ?>
+    </div>
+    <div class="real-content">
     <?php
     $warna_map = [
         'Baru'       => 'bs-baru',
@@ -548,7 +705,7 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
         'Approved'   => 'bs-approved',
     ];
 
-    if(mysqli_num_rows($q_sm_terbaru) > 0):
+    if($q_sm_terbaru && mysqli_num_rows($q_sm_terbaru) > 0):
         while($sm = mysqli_fetch_assoc($q_sm_terbaru)):
             $warna   = $warna_map[$sm['status_workflow']] ?? 'bs-arsip';
             $urgency = ($sm['status_workflow'] == 'Baru') ? 'urgency-high' : (($sm['status_workflow'] == 'Disposisi') ? 'urgency-medium' : 'urgency-normal');
@@ -583,24 +740,23 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
 
     <?php endwhile; ?>
     <?php else: ?>
-    <div class="text-center py-5" style="color:var(--ink-muted);">
-        <i class="fa-regular fa-folder-open" style="font-size:2rem;margin-bottom:8px;display:block;opacity:.4;"></i>
-        <?php
-        echo match($role) {
-            'Kepala_Sekolah' => 'Tidak ada surat yang membutuhkan disposisi.',
-            default          => 'Tidak ada data surat ditemukan.',
-        };
+    <?php
+        render_empty_state(
+            ($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') ? 'inbox' : 'folder-open',
+            ($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') ? 'Tidak ada surat yang membutuhkan disposisi' : 'Tidak ada data surat ditemukan',
+            ($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') ? 'Semua surat masuk sudah ditindaklanjuti atau belum ada surat baru.' : 'Data akan tampil ketika surat tersedia sesuai hak akses Anda.'
+        );
         ?>
-    </div>
     <?php endif; ?>
+    </div>
 </div>
 <?php endif; ?>
 
 <!-- ═══════════════════════════════════════════════════════════
      KEPALA SEKOLAH — Surat Keluar Menunggu Persetujuan
 ════════════════════════════════════════════════════════════ -->
-<?php if ($role == 'Kepala_Sekolah' && isset($q_sk_pending)): ?>
-<div class="panel fade-up delay-6 mb-4">
+<?php if (($role == 'Kepala_Sekolah' || $role == 'Kepala Sekolah') && isset($q_sk_pending)): ?>
+<div class="panel fade-up delay-6 mb-4 skeleton-host">
     <div class="panel-header">
         <span class="panel-title">
             <i class="fa-solid fa-file-signature me-2" style="color:var(--amber);"></i>
@@ -612,7 +768,22 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
         </a>
     </div>
 
-    <?php if(mysqli_num_rows($q_sk_pending) > 0):
+    <div class="skeleton-shell skeleton-list">
+        <?php for($i=0;$i<4;$i++): ?>
+        <div class="skeleton-list-row">
+            <div class="skeleton-lines" style="flex:0 0 155px;">
+                <div class="skeleton-line" style="width:80%;"></div>
+                <div class="skeleton-line" style="width:52%;"></div>
+            </div>
+            <div class="skeleton-lines">
+                <div class="skeleton-line" style="width:76%;"></div>
+                <div class="skeleton-line" style="width:46%;"></div>
+            </div>
+        </div>
+        <?php endfor; ?>
+    </div>
+    <div class="real-content">
+    <?php if($q_sk_pending && mysqli_num_rows($q_sk_pending) > 0):
         while($sk = mysqli_fetch_assoc($q_sk_pending)):
     ?>
     <div class="surat-row urgency-medium d-none d-md-flex">
@@ -638,13 +809,13 @@ body { background: var(--bg); font-family: 'DM Sans', sans-serif; color: var(--i
     </div>
     <?php endwhile; ?>
     <?php else: ?>
-    <div class="text-center py-5" style="color:var(--ink-muted);">
-        <i class="fa-solid fa-circle-check" style="font-size:2rem;margin-bottom:8px;display:block;color:var(--green);opacity:.5;"></i>
-        Tidak ada surat keluar yang menunggu persetujuan.
-    </div>
+    <?php render_empty_state('circle-check', 'Tidak ada surat keluar yang menunggu persetujuan', 'Semua surat keluar sudah diproses atau belum ada pengajuan baru.'); ?>
     <?php endif; ?>
+    </div>
 </div>
 <?php endif; ?>
+
+</div>
 
 <?php include 'layouts/footer.php'; ?>
 
@@ -659,6 +830,12 @@ function updateTime() {
 }
 updateTime(); setInterval(updateTime, 1000);
 
+// ── Skeleton Loader ──
+document.addEventListener('DOMContentLoaded', function() {
+    const dashboardPage = document.getElementById('dashboardPage');
+    if (dashboardPage) dashboardPage.classList.remove('dashboard-loading');
+});
+
 // ── Chart ──
 const labelBulan      = <?= json_encode($label_bulan) ?>;
 const dataSuratMasuk  = <?= json_encode($grafik_masuk) ?>;
@@ -666,7 +843,9 @@ const dataSuratKeluar = <?= json_encode($grafik_keluar) ?>;
 const labelMasuk      = <?= json_encode($grafik_label_masuk) ?>;
 const labelKeluar     = <?= json_encode($grafik_label_keluar) ?>;
 
-const ctx = document.getElementById('chartSurat').getContext('2d');
+const chartEl = document.getElementById('chartSurat');
+const ctx = chartEl ? chartEl.getContext('2d') : null;
+if (ctx) {
 new Chart(ctx, {
     type: 'bar',
     data: {
@@ -699,6 +878,7 @@ new Chart(ctx, {
         animation: { duration: 900, easing: 'easeOutQuart' }
     }
 });
+}
 
 // ── OCR Trigger ──
 const pendingOcrIds = <?= json_encode($pending_ids) ?>;
