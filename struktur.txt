@@ -1,0 +1,39 @@
+SISFO_PERSURATAN/
+│
+├── 📁 assets/                 # Menyimpan file statis (CSS, JS, Gambar, Plugin/Library)
+│   ├── css/
+│   ├── js/
+│   └── img/
+│
+├── 📁 config/                 # File konfigurasi inti sistem
+│   ├── koneksi.php            # Koneksi ke database
+│   └── functions.php          # Fungsi bantuan (misal: format tanggal, generator nomor surat)
+│
+├── 📁 layouts/                # Potongan UI agar tidak mengulang kode (DRY principle)
+│   ├── header.php
+│   ├── sidebar.php            # Navigasi sesuai Role (RBAC)
+│   └── footer.php
+│
+├── 📁 modul_surat_masuk/      # Folder per Modul agar rapi
+│   ├── index.php              # Menampilkan tabel data surat masuk
+│   ├── tambah.php             # Form tambah surat masuk
+│   ├── edit.php               # Form edit surat masuk
+│   ├── detail.php             # Halaman baca surat & disposisi
+│   └── aksi_surat_masuk.php   # File proses (Create, Update, Soft Delete)
+│
+├── 📁 modul_surat_keluar/
+│   ├── index.php
+│   ├── form_drafting.php
+│   └── aksi_surat_keluar.php
+│
+├── 📁 modul_disposisi/        # Khusus untuk alur workflow & tracking
+│
+├── 📁 uploads/                # Tempat menyimpan E-Archive (Wajib diproteksi via .htaccess)
+│   ├── surat_masuk/
+│   ├── surat_keluar/
+│   └── tte_qr/                # Untuk menyimpan QR Code Tanda Tangan Elektronik
+│
+├── login.php                  # Halaman Login Authentication
+├── aksi_login.php             # Pengecekan session & pembagian Role (RBAC)
+├── logout.php                 # Hancurkan session
+└── index.php                  # Halaman Dashboard Utama (Grafik & Notifikasi)

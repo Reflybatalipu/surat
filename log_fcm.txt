@@ -1,0 +1,3 @@
+[08:03:07] Akses ke file simpan_token.php terjadi.
+GAGAL: Session ID tidak ditemukan/kosong.
+

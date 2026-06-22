@@ -1,0 +1,45 @@
+        .card {
+            border-radius: 12px !important;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+        }
+
+        .table thead th {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #f8f9fa;
+        }
+
+        .btn {
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-weight: 500;
+        }
+
+        .badge {
+            border-radius: 6px;
+            font-weight: 500;
+        }
+
+        /* 1. Membatasi tinggi kontainer tabel agar bisa di-scroll secara independen */
+        .table-responsive {
+            max-height: 65vh; /* 65% dari tinggi layar (View Height). Bisa kamu ubah misal 500px */
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+
+        /* 2. Membuat Header Tabel (thead) Menempel (Sticky) di atas */
+        .table-responsive thead th {
+            position: sticky;
+            top: 0;
+            background-color: #f8f9fa; /* Warna latar belakang header (samakan dengan warna table-light) */
+            z-index: 10; /* Agar header selalu berada di atas teks tabel yang di-scroll */
+            box-shadow: 0 2px 3px -1px rgba(0,0,0,0.1); /* Memberi efek bayangan kecil di bawah header */
+        }
+
+        /* (Opsional) Jika kamu pakai Bulk Action yang kita buat sebelumnya, pastikan z-index dropdown tidak tertutup */
+        .table-responsive tbody td {
+            position: relative;
+            z-index: 1;
+        }
