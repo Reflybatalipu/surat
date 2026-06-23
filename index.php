@@ -3,6 +3,13 @@ session_start();
 include 'config/koneksi.php';
 
 // ========================================================
+// FLASH MESSAGE LOGIN (INLINE ERROR, TANPA alert())
+// ========================================================
+$login_errors  = $_SESSION['login_errors'] ?? [];
+$login_old_nip = $_SESSION['login_old_nip'] ?? '';
+unset($_SESSION['login_errors'], $_SESSION['login_old_nip']);
+
+// ========================================================
 // PROSES PERMINTAAN RESET PASSWORD (DARI POPUP/MODAL)
 // ========================================================
 if (isset($_POST['minta_reset'])) {
@@ -74,6 +81,18 @@ if (isset($_COOKIE['simpers_token'])) {
         .brand-logo { width: 70px; height: 70px; background-color: #4A70A9; color: #ffffff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: bold; margin: 0 auto 1rem; box-shadow: 0 4px 10px rgba(74, 112, 169, 0.3); }
         .btn-simpers { background-color: #4A70A9; color: white; border: none; }
         .btn-simpers:hover { background-color: #3b5a87; color: white; }
+        .password-field { position: relative; }
+        .password-field .form-control { padding-right: 3.25rem; }
+        .toggle-password {
+            position: absolute; top: 50%; right: 12px; transform: translateY(-50%);
+            border: 0; background: transparent; color: #6c757d; z-index: 5;
+            width: 34px; height: 34px; border-radius: 50%;
+            display: inline-flex; align-items: center; justify-content: center;
+        }
+        .toggle-password:hover { background: #eef2f7; color: #4A70A9; }
+        .field-error { font-size: .78rem; color: #dc3545; margin-top: .35rem; text-align: left; }
+        .btn-loading .btn-text { opacity: .75; }
+        .btn-loading .spinner-border { display: inline-block !important; }
     </style>
 </head>
 <body>
@@ -86,15 +105,26 @@ if (isset($_COOKIE['simpers_token'])) {
                         <h4 class="fw-bold mb-1 text-dark">SIMPERS</h4>
                         <p class="text-muted mb-4" style="font-size: 0.9rem;">Sistem Informasi Manajemen Persuratan Sekolah</p>
 
-                        <form action="aksi_login.php" method="POST">
-                            <div class="form-floating mb-3 text-start">
-                                <input type="text" class="form-control" id="nip" name="nip" placeholder="Masukkan NIP" required autofocus autocomplete="off">
+                        <form action="aksi_login.php" method="POST" class="js-auth-form" novalidate>
+                            <div class="form-floating text-start <?= isset($login_errors['nip']) ? 'mb-1' : 'mb-3' ?>">
+                                <input type="text" class="form-control <?= isset($login_errors['nip']) ? 'is-invalid' : '' ?>" id="nip" name="nip" placeholder="Masukkan NIP" required autofocus autocomplete="username" value="<?= htmlspecialchars($login_old_nip) ?>">
                                 <label for="nip">NIP / ID Pengguna</label>
                             </div>
-                            <div class="form-floating mb-3 text-start">
-                                <input type="password" class="form-control" id="password" name="password" placeholder="Password" required>
+                            <?php if (isset($login_errors['nip'])): ?>
+                                <div class="field-error mb-3"><i class="fa-solid fa-circle-exclamation me-1"></i><?= htmlspecialchars($login_errors['nip']) ?></div>
+                            <?php endif; ?>
+
+                            <div class="form-floating password-field text-start <?= isset($login_errors['password']) ? 'mb-1' : 'mb-3' ?>">
+                                <input type="password" class="form-control <?= isset($login_errors['password']) ? 'is-invalid' : '' ?>" id="password" name="password" placeholder="Password" required autocomplete="current-password">
                                 <label for="password">Password</label>
+                                <button type="button" class="toggle-password" data-target="password" aria-label="Tampilkan password">
+                                    <i class="fa-regular fa-eye"></i>
+                                </button>
                             </div>
+                            <?php if (isset($login_errors['password'])): ?>
+                                <div class="field-error mb-3"><i class="fa-solid fa-circle-exclamation me-1"></i><?= htmlspecialchars($login_errors['password']) ?></div>
+                            <?php endif; ?>
+
                             <div class="form-check text-start mb-4">
                                 <input class="form-check-input" type="checkbox" name="remember" id="remember">
                                 <label class="form-check-label text-muted" for="remember" style="font-size: 0.9rem;">
@@ -102,7 +132,10 @@ if (isset($_COOKIE['simpers_token'])) {
                                 </label>
                             </div>
                             
-                            <button type="submit" name="login" class="btn btn-simpers w-100 py-2 mb-3 fw-bold" style="border-radius: 8px;">Masuk Sistem</button>
+                            <button type="submit" name="login" class="btn btn-simpers w-100 py-2 mb-3 fw-bold js-submit-btn" style="border-radius: 8px;">
+                                <span class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                                <span class="btn-text">Masuk Sistem</span>
+                            </button>
                         </form>
                         
                         <div class="mt-3 text-muted d-flex justify-content-between px-1" style="font-size: 0.85rem;">
@@ -238,6 +271,39 @@ $is_jam_kerja = ($hari_ini >= 1 && $hari_ini <= 5) && ($jam_sekarang >= $jam_mul
 }
 </style>
 
+    <script>
+        // Toggle show/hide password
+        document.querySelectorAll('.toggle-password').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                const targetId = btn.getAttribute('data-target');
+                const input = document.getElementById(targetId);
+                const icon = btn.querySelector('i');
+                if (!input) return;
+
+                const show = input.type === 'password';
+                input.type = show ? 'text' : 'password';
+                btn.setAttribute('aria-label', show ? 'Sembunyikan password' : 'Tampilkan password');
+                if (icon) {
+                    icon.classList.toggle('fa-eye', !show);
+                    icon.classList.toggle('fa-eye-slash', show);
+                }
+            });
+        });
+
+        // Loading state saat form login dikirim
+        document.querySelectorAll('.js-auth-form').forEach(function(form) {
+            form.addEventListener('submit', function() {
+                const btn = form.querySelector('.js-submit-btn');
+                if (!btn) return;
+                btn.disabled = true;
+                btn.classList.add('btn-loading');
+                const text = btn.querySelector('.btn-text');
+                const spinner = btn.querySelector('.spinner-border');
+                if (text) text.textContent = 'Memproses...';
+                if (spinner) spinner.classList.remove('d-none');
+            });
+        });
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
