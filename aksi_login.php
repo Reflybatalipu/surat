@@ -12,7 +12,7 @@ function kembali_login_dengan_error(array $errors, string $nip = ''): void
     exit;
 }
 
-if (!isset($_POST['login'])) {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header("Location: index.php");
     exit;
 }
