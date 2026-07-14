@@ -11,6 +11,21 @@ if (!isset($_SESSION['status_login']) || $_SESSION['status_login'] !== true) {
 $user_id_sekarang = $_SESSION['user_id'];
 $role_sekarang = $_SESSION['nama_role'];
 
+// Helper tampilan status OCR agar konsisten di tabel dan kartu mobile
+function renderOcrBadge($status_ocr) {
+    $status = strtolower(trim((string)$status_ocr));
+    if ($status === 'completed') {
+        return '<span class="badge bg-success-subtle text-success border border-success-subtle mt-1"><i class="fa-solid fa-check-circle me-1"></i>OCR selesai</span>';
+    }
+    if ($status === 'failed') {
+        return '<span class="badge bg-danger-subtle text-danger border border-danger-subtle mt-1"><i class="fa-solid fa-triangle-exclamation me-1"></i>OCR gagal</span>';
+    }
+    if ($status === 'processing') {
+        return '<span class="badge bg-warning-subtle text-warning border border-warning-subtle mt-1"><span class="spinner-border spinner-border-sm me-1" style="width:.65rem;height:.65rem;"></span>OCR proses</span>';
+    }
+    return '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle mt-1"><i class="fa-regular fa-clock me-1"></i>OCR antrean</span>';
+}
+
 // 🔍 TANGKAP KATA KUNCI PENCARIAN
 $keyword = "";
 $query_pencarian = "";
@@ -88,7 +103,7 @@ if (!empty($surat_ids)) {
 $audit_logs = [];
 if (!empty($surat_ids)) {
     $q_log = mysqli_query($koneksi, "
-        SELECT a.action, a.created_at, a.record_id, u.nama_lengkap 
+        SELECT a.action, a.created_at, a.record_id, a.user_id, u.nama_lengkap 
         FROM audit_logs a 
         LEFT JOIN users u ON a.user_id = u.id 
         WHERE a.table_name = 'surat_masuk' AND a.record_id IN ($ids_str) 
@@ -97,6 +112,151 @@ if (!empty($surat_ids)) {
     while($log = mysqli_fetch_assoc($q_log)){
         $audit_logs[$log['record_id']][] = $log;
     }
+}
+
+// ========================================================
+// 5. AMBIL DETAIL DISPOSISI UNTUK TIMELINE
+//    Ditampilkan agar lacak jejak tidak hanya menyebut aksi,
+//    tetapi juga kepada siapa surat diteruskan, instruksi, SLA, dan statusnya.
+// ========================================================
+$detail_disposisi = [];
+if (!empty($surat_ids)) {
+    $ids_str = implode(',', array_map('intval', $surat_ids));
+    $q_disposisi_detail = mysqli_query($koneksi, "
+        SELECT 
+            d.id,
+            d.surat_id,
+            d.dari_user_id,
+            d.ke_user_id,
+            d.instruksi,
+            d.laporan_tindak_lanjut,
+            d.status_disposisi,
+            d.status,
+            d.batas_waktu_sla,
+            d.read_at,
+            d.acted_at,
+            d.waktu_selesai,
+            penerima.nama_lengkap AS nama_penerima,
+            rp.nama_role AS role_penerima,
+            pengirim.nama_lengkap AS nama_pengirim,
+            log_disposisi.created_at AS disposisi_created_at,
+            log_disposisi.action AS disposisi_log_action
+        FROM disposisi d
+        LEFT JOIN users penerima ON d.ke_user_id = penerima.id
+        LEFT JOIN roles rp ON penerima.role_id = rp.id
+        LEFT JOIN users pengirim ON d.dari_user_id = pengirim.id
+        LEFT JOIN audit_logs log_disposisi 
+            ON log_disposisi.table_name = 'disposisi'
+            AND log_disposisi.record_id = d.id
+            AND log_disposisi.action IN ('CREATE_DISPOSISI','FORWARD_DISPOSISI')
+        WHERE d.surat_id IN ($ids_str)
+        ORDER BY d.id ASC
+    ");
+    if ($q_disposisi_detail) {
+        while($dis = mysqli_fetch_assoc($q_disposisi_detail)){
+            $detail_disposisi[$dis['surat_id']][] = $dis;
+        }
+    }
+}
+
+
+// ========================================================
+// 6. HELPER TIMELINE DISPOSISI
+//    Penting: jangan tampilkan semua disposisi milik surat pada semua event.
+//    Tiap event timeline hanya menampilkan penerima disposisi yang relevan
+//    dengan aktor dan waktu batch tindakan tersebut.
+// ========================================================
+function ambilDetailDisposisiUntukLog($semua_disposisi_surat, $log) {
+    if (empty($semua_disposisi_surat) || empty($log['created_at'])) {
+        return [];
+    }
+
+    $log_user_id = isset($log['user_id']) ? (int)$log['user_id'] : 0;
+    $log_time = strtotime($log['created_at']);
+
+    // 1) Kandidat utama: sama aktor/pemberi disposisi.
+    $candidates = [];
+    foreach ($semua_disposisi_surat as $dis) {
+        $dari_user_id = isset($dis['dari_user_id']) ? (int)$dis['dari_user_id'] : 0;
+        if ($log_user_id > 0 && $dari_user_id !== $log_user_id) {
+            continue;
+        }
+        $candidates[] = $dis;
+    }
+
+    if (empty($candidates)) {
+        return [];
+    }
+
+    // 2) Jika ada waktu audit per baris disposisi, ambil batch yang waktunya paling dekat
+    //    dengan audit log surat_masuk saat DISPOSISI_SURAT / TERUSKAN_DISPOSISI dicatat.
+    $with_time = [];
+    foreach ($candidates as $dis) {
+        if (!empty($dis['disposisi_created_at'])) {
+            $dis_time = strtotime($dis['disposisi_created_at']);
+            if ($dis_time !== false) {
+                $dis['_diff_seconds'] = abs($log_time - $dis_time);
+                $dis['_time_seconds'] = $dis_time;
+                $with_time[] = $dis;
+            }
+        }
+    }
+
+    if (!empty($with_time)) {
+        usort($with_time, function($a, $b) {
+            return ($a['_diff_seconds'] ?? PHP_INT_MAX) <=> ($b['_diff_seconds'] ?? PHP_INT_MAX);
+        });
+
+        $closest_time = $with_time[0]['_time_seconds'];
+        $closest_diff = $with_time[0]['_diff_seconds'];
+
+        // Batas 5 menit agar satu batch disposisi yang dicatat berdekatan tetap masuk,
+        // tetapi batch lama dari aktor yang sama tidak ikut tampil.
+        if ($closest_diff <= 300) {
+            $batch = [];
+            foreach ($with_time as $dis) {
+                if (abs($dis['_time_seconds'] - $closest_time) <= 15) {
+                    unset($dis['_diff_seconds'], $dis['_time_seconds']);
+                    $batch[] = $dis;
+                }
+            }
+            return $batch;
+        }
+    }
+
+    // 3) Fallback aman jika audit log disposisi lama belum lengkap:
+    //    tampilkan hanya disposisi dari aktor yang sama, bukan semua surat.
+    return $candidates;
+}
+
+function hitungRingkasanDisposisi($daftar_disposisi) {
+    $ringkasan = [
+        'total' => 0,
+        'selesai' => 0,
+        'waktu_selesai_terakhir' => null,
+    ];
+
+    if (empty($daftar_disposisi) || !is_array($daftar_disposisi)) {
+        return $ringkasan;
+    }
+
+    foreach ($daftar_disposisi as $dis) {
+        $ringkasan['total']++;
+        $status_raw = $dis['status'] ?: ($dis['status_disposisi'] ?? 'Menunggu');
+        $status_lower = strtolower(trim((string)$status_raw));
+
+        if (in_array($status_lower, ['selesai', 'completed', 'finish', 'finished'])) {
+            $ringkasan['selesai']++;
+            if (!empty($dis['acted_at'])) {
+                $time = strtotime($dis['acted_at']);
+                if ($time && ($ringkasan['waktu_selesai_terakhir'] === null || $time > $ringkasan['waktu_selesai_terakhir'])) {
+                    $ringkasan['waktu_selesai_terakhir'] = $time;
+                }
+            }
+        }
+    }
+
+    return $ringkasan;
 }
 
 include '../layouts/header.php'; 
@@ -110,13 +270,84 @@ include '../layouts/header.php';
 .timeline-item::before { content: ''; position: absolute; top: 5px; left: -24px; width: 12px; height: 12px; border-radius: 50%; background: #17a2b8; border: 2px solid #fff; box-shadow: 0 0 0 2px #17a2b8; }
 .timeline-date { font-size: 0.85em; color: #6c757d; font-weight: bold; }
 .timeline-content { background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 5px; }
+.timeline-disposisi-detail { margin-top:10px; border:1px solid #dbeafe; background:#f8fbff; border-radius:12px; overflow:hidden; }
+.timeline-disposisi-head { padding:9px 12px; background:#eaf2ff; color:#1d4ed8; font-weight:800; font-size:.82rem; display:flex; align-items:center; gap:7px; }
+.timeline-disposisi-body { padding:10px 12px; }
+.timeline-disposisi-person { display:flex; align-items:flex-start; gap:9px; padding:9px 0; border-bottom:1px dashed #dbeafe; }
+.timeline-disposisi-person:last-child { border-bottom:none; padding-bottom:0; }
+.timeline-disposisi-avatar { width:34px; height:34px; border-radius:12px; background:#dbeafe; color:#1d4ed8; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.timeline-disposisi-name { font-weight:800; color:#0f172a; font-size:.86rem; }
+.timeline-disposisi-role { color:#64748b; font-size:.74rem; }
+.timeline-disposisi-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.timeline-mini-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:.68rem; font-weight:700; }
+.timeline-mini-badge.wait { background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; }
+.timeline-mini-badge.done { background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
+.timeline-mini-badge.info { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+.timeline-disposisi-instruksi { margin-top:8px; padding:8px 10px; background:#fff; border-left:3px solid #4A70A9; border-radius:8px; color:#475569; font-size:.78rem; }
+.timeline-disposisi-finish { margin:10px 12px 12px; padding:10px 12px; border-radius:10px; background:#ecfdf5; border:1px solid #bbf7d0; color:#166534; font-size:.8rem; font-weight:700; display:flex; align-items:flex-start; gap:8px; }
+.timeline-disposisi-finish small { display:block; color:#15803d; font-weight:500; margin-top:2px; }
+	.timeline-stage-finish { background:#f8fafc; border-color:#e2e8f0; color:#475569; }
+	.timeline-stage-finish small { color:#64748b; }
+	.timeline-global-finish .timeline-content { background:#ecfdf5; border:1px solid #bbf7d0; color:#166534; }
+	.timeline-global-finish .timeline-content strong { color:#15803d !important; }
+.disposisi-search-box { position:sticky; top:0; z-index:2; background:#fff; padding-bottom:10px; margin-bottom:8px; border-bottom:1px solid #eef2f7; }
+.disposisi-user-item { border-radius:9px; padding:6px 8px; transition:background .15s ease; }
+.disposisi-user-item:hover { background:#f8fafc; }
+.disposisi-empty-result { display:none; padding:12px; text-align:center; color:#94a3b8; font-size:.82rem; }
+
+
+/* UI Modern Surat Masuk */
+.sm-page-content { opacity: 0; transform: translateY(8px); transition: opacity .25s ease, transform .25s ease; }
+body.sm-ready .sm-page-content { opacity: 1; transform: none; }
+body.sm-ready #smPageSkeleton { display: none !important; }
+.sm-skeleton-card { background:#fff; border:1px solid #e9eef5; border-radius:16px; box-shadow:0 3px 18px rgba(15,25,35,.06); padding:18px; }
+.sm-skeleton-line, .sm-skeleton-pill, .sm-skeleton-box { display:block; background:linear-gradient(90deg,#eef2f7 25%,#f8fafc 37%,#eef2f7 63%); background-size:400% 100%; animation:smShimmer 1.25s ease-in-out infinite; border-radius:10px; }
+.sm-skeleton-line { height:14px; margin-bottom:12px; }
+.sm-skeleton-pill { height:34px; border-radius:999px; }
+.sm-skeleton-box { height:48px; border-radius:12px; margin-bottom:10px; }
+@keyframes smShimmer { 0%{background-position:100% 0} 100%{background-position:0 0} }
+.sm-empty-state { padding:54px 24px; text-align:center; color:#64748b; }
+.sm-empty-icon { width:82px; height:82px; border-radius:28px; margin:0 auto 16px; display:flex; align-items:center; justify-content:center; background:#eaf0f8; color:#4A70A9; font-size:2rem; box-shadow:inset 0 0 0 1px rgba(74,112,169,.08); }
+.sm-empty-title { font-weight:800; color:#0f172a; margin-bottom:4px; }
+.sm-empty-text { font-size:.9rem; max-width:420px; margin:0 auto 16px; }
+.sm-ocr-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.sm-action-needed { background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; border-radius:999px; padding:2px 8px; font-size:.68rem; font-weight:700; display:inline-flex; align-items:center; gap:4px; }
+.sm-upload-feedback { display:none; margin-top:8px; font-size:.78rem; border-radius:8px; padding:8px 10px; }
+.sm-upload-feedback.is-error { display:block; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+.sm-upload-feedback.is-ok { display:block; background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
+.sm-processing-overlay { position:fixed; inset:0; z-index:20000; background:rgba(15,23,42,.28); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; }
+.sm-processing-overlay.show { display:flex; }
+.sm-processing-box { background:#fff; border-radius:16px; padding:20px 24px; box-shadow:0 18px 60px rgba(15,23,42,.22); display:flex; align-items:center; gap:12px; color:#0f172a; font-weight:700; }
+@media(max-width:767.98px){ .sm-page-content > .d-flex:first-child { align-items:stretch !important; } .sm-page-content > .d-flex:first-child > .d-flex { width:100%; flex-direction:column; } .sm-page-content form.d-flex { width:100%; } .sm-page-content .input-group { width:100%; } .sm-page-content .input-group input { min-width:0 !important; } }
+
 </style>
 
+<div id="smProcessingOverlay" class="sm-processing-overlay" aria-hidden="true">
+    <div class="sm-processing-box">
+        <span class="spinner-border text-primary" role="status" aria-hidden="true"></span>
+        <span>Memproses permintaan...</span>
+    </div>
+</div>
+
+<div id="smPageSkeleton" class="mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+        <span class="sm-skeleton-line" style="width:240px;height:28px;"></span>
+        <span class="sm-skeleton-pill" style="width:330px;"></span>
+    </div>
+    <div class="sm-skeleton-card mb-3">
+        <span class="sm-skeleton-line" style="width:160px;"></span>
+        <span class="sm-skeleton-box"></span>
+        <span class="sm-skeleton-box"></span>
+        <span class="sm-skeleton-box"></span>
+    </div>
+</div>
+
+<div id="smPageContent" class="sm-page-content">
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
     <h4 class="fw-bold text-dark mb-0"><i class="fa-solid fa-inbox me-2 text-primary"></i> Data Surat Masuk</h4>
     
     <div class="d-flex gap-2">
-        <form action="" method="GET" class="d-flex">
+        <form action="" method="GET" class="d-flex js-loading-form">
             <div class="input-group shadow-sm">
                 <input type="text" name="cari" class="form-control" placeholder="Cari isi surat, nomor..." value="<?= htmlspecialchars($keyword) ?>" style="min-width: 250px;">
                 <button type="submit" class="btn btn-primary" title="Cari Data"><i class="fa-solid fa-search"></i></button>
@@ -158,9 +389,15 @@ include '../layouts/header.php';
             <?php endif; ?>
         </div>
         <?php if (empty($data_surat)): ?>
-            <div class='text-center py-5 text-muted'>
-                <i class='fa-solid fa-folder-open fs-1 d-block mb-3 text-light'></i> 
-                Tidak ada data surat yang ditemukan.
+            <div class='sm-empty-state'>
+                <div class='sm-empty-icon'><i class='fa-solid fa-envelope-open-text'></i></div>
+                <div class='sm-empty-title'>Tidak ada surat masuk ditemukan</div>
+                <div class='sm-empty-text'>Belum ada surat yang sesuai dengan pencarian atau akses Anda saat ini.</div>
+                <?php if($_SESSION['nama_role'] == 'Admin_TU'): ?>
+                    <button type='button' class='btn btn-primary btn-sm fw-bold' data-bs-toggle='modal' data-bs-target='#modalTambah'>
+                        <i class='fa-solid fa-plus me-1'></i> Registrasi Surat Masuk
+                    </button>
+                <?php endif; ?>
             </div>
         <?php else: ?>
 
@@ -203,12 +440,13 @@ include '../layouts/header.php';
                                 <?php if(!empty($data['ocr_text']) && $keyword != '' && stripos($data['ocr_text'], $keyword) !== false): ?>
                                     <br><span class="badge bg-light text-primary border border-primary mt-1 small" title="Kata kunci ditemukan di dalam gambar fisik surat"><i class="fa-solid fa-microchip me-1"></i> Ditemukan via OCR</span>
                                 <?php endif; ?>
+                                <div class="sm-ocr-row"><?= renderOcrBadge($data['status_ocr'] ?? '') ?></div>
                             </td>
                             <td>
                                 <div class="fw-bold <?= $warna_sifat; ?> small"><i class="fa-solid fa-shield-halved me-1"></i> <?= $data['klasifikasi']; ?></div>
                                 <div class="text-muted small">Tujuan: <?= $data['nama_unit'] ?? 'Belum ditentukan'; ?></div>
                             </td>
-                            <td><span class="badge <?= $warna_status; ?>"><?= $data['status_workflow']; ?></span></td>
+                            <td><span class="badge <?= $warna_status; ?>"><?= $data['status_workflow']; ?></span><?php if($_SESSION['nama_role'] == 'Admin_TU' && $data['status_workflow'] == 'Baru'): ?><div class="mt-1"><span class="sm-action-needed"><i class="fa-solid fa-bolt"></i> Perlu disposisi</span></div><?php endif; ?></td>
                             <td class="text-center">
                                 
                                 <button class="btn btn-sm btn-info text-white" data-bs-toggle="modal" data-bs-target="#modalTimeline<?= $data['id']; ?>" title="Lacak Jejak Surat">
@@ -272,6 +510,7 @@ include '../layouts/header.php';
                                 <?php if(!empty($data['ocr_text']) && $keyword != '' && stripos($data['ocr_text'], $keyword) !== false): ?>
                                     <span class="badge bg-light text-primary border border-primary mt-2 small"><i class="fa-solid fa-microchip me-1"></i> Match OCR</span>
                                 <?php endif; ?>
+                                <div class="sm-ocr-row"><?= renderOcrBadge($data['status_ocr'] ?? '') ?></div>
                             </div>
                         </div>
 
@@ -325,7 +564,15 @@ include '../layouts/header.php';
                         $id_surat = $data['id'];
                         if(isset($audit_logs[$id_surat]) && count($audit_logs[$id_surat]) > 0) {
                             foreach ($audit_logs[$id_surat] as $log) {
-                                $pesan_aksi = $log['action'];
+                                $action_raw = $log['action'] ?? '';
+
+                                // FINISH/FOLLOW_UP adalah status lokal pada penerima disposisi.
+                                // Jangan tampilkan sebagai baris timeline utama agar tidak menumpuk.
+                                if (in_array($action_raw, ['FINISH_SURAT_MASUK', 'FOLLOW_UP_DISPOSISI'])) {
+                                    continue;
+                                }
+
+                                $pesan_aksi = $action_raw;
                                 $icon = "fas fa-circle"; $color = "text-secondary";
 
                                 if ($log['action'] == 'CREATE_SURAT_MASUK') {
@@ -347,10 +594,111 @@ include '../layouts/header.php';
                                     <div class="timeline-content">
                                         <strong class="<?= $color; ?>"><i class="<?= $icon; ?> me-1"></i> <?= $pesan_aksi; ?></strong><br>
                                         <small class="text-muted">Aktor: <?= $log['nama_lengkap'] ?: 'Sistem (Auto)'; ?></small>
+
+                                        <?php
+                                            $detail_disposisi_log = [];
+                                            if (strpos($log['action'], 'DISPOSISI') !== false && !empty($detail_disposisi[$id_surat])) {
+                                                $detail_disposisi_log = ambilDetailDisposisiUntukLog($detail_disposisi[$id_surat], $log);
+                                            }
+                                        ?>
+                                        <?php if (!empty($detail_disposisi_log)): ?>
+                                            <div class="timeline-disposisi-detail">
+                                                <div class="timeline-disposisi-head">
+                                                    <i class="fa-solid fa-users-viewfinder"></i>
+                                                    Detail Penerima Disposisi
+                                                </div>
+                                                <div class="timeline-disposisi-body">
+                                                    <?php
+                                                        $total_penerima_disposisi = count($detail_disposisi_log);
+                                                        $total_selesai_disposisi = 0;
+                                                        $waktu_selesai_terakhir = null;
+
+                                                        foreach($detail_disposisi_log as $cek_dis) {
+                                                            $cek_status = strtolower($cek_dis['status'] ?: ($cek_dis['status_disposisi'] ?? 'Menunggu'));
+                                                            if (in_array($cek_status, ['selesai', 'completed', 'finish', 'finished'])) {
+                                                                $total_selesai_disposisi++;
+                                                                if (!empty($cek_dis['acted_at'])) {
+                                                                    $cek_time = strtotime($cek_dis['acted_at']);
+                                                                    if ($cek_time && ($waktu_selesai_terakhir === null || $cek_time > $waktu_selesai_terakhir)) {
+                                                                        $waktu_selesai_terakhir = $cek_time;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    ?>
+                                                    <?php foreach($detail_disposisi_log as $dis):
+                                                        $status_raw = $dis['status'] ?: ($dis['status_disposisi'] ?? 'Menunggu');
+                                                        $status_lower = strtolower($status_raw);
+                                                        $is_done = in_array($status_lower, ['selesai', 'completed', 'finish', 'finished']);
+                                                        $status_label = $is_done ? 'Selesai' : 'Pending';
+                                                        $badge_class = $is_done ? 'done' : 'wait';
+                                                        $sla_text = !empty($dis['batas_waktu_sla']) ? date('d M Y, H:i', strtotime($dis['batas_waktu_sla'])) : 'Tanpa SLA';
+                                                        $acted_text = !empty($dis['acted_at']) ? date('d M Y, H:i', strtotime($dis['acted_at'])) : '';
+                                                    ?>
+                                                    <div class="timeline-disposisi-person">
+                                                        <div class="timeline-disposisi-avatar"><i class="fa-solid fa-user-check"></i></div>
+                                                        <div class="flex-grow-1">
+                                                            <div class="timeline-disposisi-name"><?= htmlspecialchars($dis['nama_penerima'] ?? 'Penerima tidak diketahui'); ?></div>
+                                                            <div class="timeline-disposisi-role"><?= htmlspecialchars($dis['role_penerima'] ?? 'Role tidak diketahui'); ?></div>
+                                                            <div class="timeline-disposisi-meta">
+                                                                <span class="timeline-mini-badge <?= $badge_class; ?>">
+                                                                    <i class="fa-solid <?= $is_done ? 'fa-circle-check' : 'fa-clock'; ?>"></i>
+                                                                    <?= htmlspecialchars($status_label); ?>
+                                                                </span>
+                                                                <span class="timeline-mini-badge info">
+                                                                    <i class="fa-regular fa-calendar"></i>
+                                                                    SLA: <?= htmlspecialchars($sla_text); ?>
+                                                                </span>
+                                                                <?php if($acted_text): ?>
+                                                                <span class="timeline-mini-badge done">
+                                                                    <i class="fa-solid fa-check-double"></i>
+                                                                    Ditindak: <?= htmlspecialchars($acted_text); ?>
+                                                                </span>
+                                                                <?php endif; ?>
+                                                            </div>
+                                                            <?php if(!empty($dis['instruksi'])): ?>
+                                                                <div class="timeline-disposisi-instruksi">
+                                                                    <strong>Instruksi:</strong> <?= nl2br(htmlspecialchars($dis['instruksi'])); ?>
+                                                                </div>
+                                                            <?php endif; ?>
+                                                            <?php if(!empty($dis['laporan_tindak_lanjut'])): ?>
+                                                                <div class="timeline-disposisi-instruksi" style="border-left-color:#16a34a;">
+                                                                    <strong>Laporan tindak lanjut:</strong> <?= nl2br(htmlspecialchars($dis['laporan_tindak_lanjut'])); ?>
+                                                                </div>
+                                                            <?php endif; ?>
+                                                        </div>
+                                                    </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                                <?php if($total_penerima_disposisi > 0 && $total_penerima_disposisi === $total_selesai_disposisi): ?>
+                                                    <div class="timeline-disposisi-finish timeline-stage-finish">
+                                                        <i class="fa-solid fa-circle-check mt-1"></i>
+                                                        <div>
+                                                            TAHAP DISPOSISI SELESAI
+                                                            <small>Semua penerima pada tahap ini telah menindaklanjuti tugas<?= $waktu_selesai_terakhir ? ' pada ' . date('d M Y, H:i', $waktu_selesai_terakhir) : ''; ?>.</small>
+                                                        </div>
+                                                    </div>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                         <?php 
-                            } 
+                            }
+
+                            $ringkasan_surat_disposisi = hitungRingkasanDisposisi($detail_disposisi[$id_surat] ?? []);
+                            if ($ringkasan_surat_disposisi['total'] > 0 && $ringkasan_surat_disposisi['total'] === $ringkasan_surat_disposisi['selesai']):
+                                $tanggal_finish_global = $ringkasan_surat_disposisi['waktu_selesai_terakhir'] ? date('d M Y, H:i', $ringkasan_surat_disposisi['waktu_selesai_terakhir']) : date('d M Y, H:i');
+                        ?>
+                                <div class="timeline-item mb-3 timeline-global-finish">
+                                    <div class="timeline-date fw-bold" style="font-size: 0.85rem;"><?= $tanggal_finish_global; ?></div>
+                                    <div class="timeline-content">
+                                        <strong><i class="fa-solid fa-check-double me-1"></i> FINISH SURAT MASUK</strong><br>
+                                        <small>Seluruh penerima disposisi pada surat ini telah menyelesaikan tugasnya.</small>
+                                    </div>
+                                </div>
+                        <?php
+                            endif;
                         } else {
                             echo "<p class='text-center text-muted small'>Belum ada riwayat pergerakan tercatat.</p>";
                         }
@@ -363,7 +711,7 @@ include '../layouts/header.php';
 
     <div class="modal fade" id="modalEdit<?= $data['id'] ?? ''; ?>" tabindex="-1">
         <div class="modal-dialog modal-lg">
-            <form action="aksi_surat_masuk.php" method="POST" enctype="multipart/form-data">
+            <form action="aksi_surat_masuk.php" method="POST" enctype="multipart/form-data" class="js-loading-form">
                 <div class="modal-content text-start">
                     <div class="modal-header bg-warning">
                         <h5 class="modal-title fw-bold text-dark"><i class="fa-solid fa-pen-to-square me-2"></i> Edit Surat Masuk</h5>
@@ -532,7 +880,7 @@ include '../layouts/header.php';
     
     <div class="modal fade" id="modalDisposisi<?= $data['id']; ?>" tabindex="-1">
         <div class="modal-dialog">
-            <form action="../disposisi/aksi_disposisi.php" method="POST">
+            <form action="../disposisi/aksi_disposisi.php" method="POST" class="js-loading-form">
                 <div class="modal-content">
                     <div class="modal-header bg-light">
                         <h5 class="modal-title fw-bold text-dark"><i class="fa-solid fa-share-nodes text-success me-2"></i> Teruskan Surat</h5>
@@ -546,18 +894,31 @@ include '../layouts/header.php';
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-bold">Teruskan Kepada</label>
-                            <div class="border rounded p-3 bg-white" style="max-height: 250px; overflow-y: auto;">
-                                <div class="form-check border-bottom pb-2 mb-2">
-                                    <input class="form-check-input" type="checkbox" id="checkAll_sm_<?= $data['id']; ?>" onchange="toggleCheckboxes(this, 'user_cb_sm_<?= $data['id']; ?>')">
+                            <div class="border rounded p-3 bg-white" style="max-height: 310px; overflow-y: auto;" data-disposisi-list="<?= $data['id']; ?>">
+                                <div class="disposisi-search-box">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-light"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
+                                        <input type="text" class="form-control disposisi-search-input" data-target-list="<?= $data['id']; ?>" placeholder="Cari nama atau role pegawai...">
+                                    </div>
+                                    <small class="text-muted d-block mt-1">Pilih satu atau beberapa pegawai tujuan disposisi.</small>
+                                </div>
+                                <div class="form-check border-bottom pb-2 mb-2 disposisi-check-all-row">
+                                    <input class="form-check-input" type="checkbox" id="checkAll_sm_<?= $data['id']; ?>" onchange="toggleVisibleDisposisiCheckboxes(this, '<?= $data['id']; ?>')">
                                     <label class="form-check-label fw-bold text-primary" for="checkAll_sm_<?= $data['id']; ?>">
-                                        <i class="fa-solid fa-users me-1"></i> Pilih Semua Pegawai
+                                        <i class="fa-solid fa-users me-1"></i> Pilih Semua yang Tampil
                                     </label>
                                 </div>
-                                <?php foreach($daftar_pegawai as $u): ?>
-                                <div class="form-check mb-1">
+                                <div class="disposisi-empty-result" data-empty-list="<?= $data['id']; ?>">
+                                    <i class="fa-regular fa-face-frown me-1"></i> Pegawai tidak ditemukan.
+                                </div>
+                                <?php foreach($daftar_pegawai as $u): 
+                                    $search_text = strtolower(($u['nama_lengkap'] ?? '') . ' ' . ($u['nama_role'] ?? ''));
+                                ?>
+                                <div class="form-check mb-1 disposisi-user-item" data-user-item="<?= $data['id']; ?>" data-search-text="<?= htmlspecialchars($search_text); ?>">
                                     <input class="form-check-input user_cb_sm_<?= $data['id']; ?>" type="checkbox" name="ke_user_id[]" value="<?= $u['id']; ?>" id="user_<?= $u['id']; ?>_sm_<?= $data['id']; ?>">
                                     <label class="form-check-label" for="user_<?= $u['id']; ?>_sm_<?= $data['id']; ?>">
-                                        <?= $u['nama_lengkap']; ?> <span class="text-muted small">-(<?= $u['nama_role']; ?>)-</span>
+                                        <span class="fw-semibold"><?= htmlspecialchars($u['nama_lengkap']); ?></span>
+                                        <span class="text-muted small">— <?= htmlspecialchars($u['nama_role']); ?></span>
                                     </label>
                                 </div>
                                 <?php endforeach; ?>
@@ -583,7 +944,7 @@ include '../layouts/header.php';
     
     <div class="modal fade" id="modalHapus<?= $data['id']; ?>" tabindex="-1">
         <div class="modal-dialog">
-            <form action="aksi_surat_masuk.php" method="POST">
+            <form action="aksi_surat_masuk.php" method="POST" class="js-loading-form">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title fw-bold text-danger">Hapus Data Surat</h5>
@@ -607,7 +968,7 @@ include '../layouts/header.php';
 
 <div class="modal fade" id="modalTambah" tabindex="-1">
     <div class="modal-dialog modal-lg">
-        <form action="aksi_surat_masuk.php" method="POST" enctype="multipart/form-data">
+        <form action="aksi_surat_masuk.php" method="POST" enctype="multipart/form-data" class="js-loading-form">
             <div class="modal-content">
                 <div class="modal-header bg-primary text-white">
                     <h5 class="modal-title fw-bold"><i class="fa-solid fa-file-circle-plus me-2"></i> Registrasi Surat Masuk</h5>
@@ -697,6 +1058,7 @@ include '../layouts/header.php';
                             <input type="file" id="inputFileSuratUtama" name="file_path"
                                 accept=".pdf,.jpg,.jpeg,.png" class="d-none"
                                 onchange="handleFileInput(this, 'utama')">
+                            <div class="sm-upload-feedback" data-upload-feedback="utama"></div>
 
                             <!-- Area preview Surat Utama -->
                             <div id="previewSuratUtama" class="d-none">
@@ -782,6 +1144,7 @@ include '../layouts/header.php';
                                 accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
                                 multiple class="d-none"
                                 onchange="handleFileInput(this, 'lampiran')">
+                            <div class="sm-upload-feedback" data-upload-feedback="lampiran"></div>
 
                             <!-- Area preview Lampiran -->
                             <div id="previewLampiran" class="d-none">
@@ -847,6 +1210,8 @@ include '../layouts/header.php';
         </form>
     </div>
 </div>
+</div>
+
 <?php
 // Cari tahu apakah ada surat yang status OCR-nya masih menggantung ('processing')
 $q_pending_ocr = mysqli_query($koneksi, "SELECT id FROM surat_masuk WHERE status_ocr = 'processing'");
@@ -997,7 +1362,9 @@ function handleFileInput(input, target) {
     el(target, 'modeField').value = 'file';
     el(target, 'sumber').classList.add('d-none');
     el(target, 'preview').classList.remove('d-none');
+    setUploadFeedback(target, 'ok', target === 'utama' ? 'Dokumen utama siap diunggah.' : 'Lampiran siap diunggah.');
 }
+
 
 function buatThumbFile(file, container) {
     const reader = new FileReader();
@@ -1274,7 +1641,9 @@ function resetUpload(target) {
     );
     if (thumbKam) thumbKam.innerHTML = '';
     el(target, 'counter').textContent = '0';
+    clearUploadFeedback(target);
 }
+
 
 // ============================================================
 // 9. VALIDASI FORM SEBELUM SUBMIT
@@ -1321,7 +1690,7 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('inputFileSuratUtama').addEventListener('change', function () {
         const max = 1.5 * 1024 * 1024;
         if (this.files[0] && this.files[0].size > max) {
-            alert('Ukuran file Surat Utama tidak boleh lebih dari 1,5 MB!');
+            setUploadFeedback('utama', 'error', 'Ukuran file Surat Utama tidak boleh lebih dari 1,5 MB.');
             this.value = '';
         }
     });
@@ -1330,7 +1699,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const max = 1.5 * 1024 * 1024;
         Array.from(this.files).forEach(f => {
             if (f.size > max) {
-                alert(`File "${f.name}" melebihi 1,5 MB!`);
+                setUploadFeedback('lampiran', 'error', `File "${f.name}" melebihi 1,5 MB.`);
                 this.value = '';
             }
         });
@@ -1344,6 +1713,35 @@ function toggleCheckboxes(source, className) {
     const checkboxes = document.querySelectorAll('.' + className);
     checkboxes.forEach(cb => cb.checked = source.checked);
 }
+
+function toggleVisibleDisposisiCheckboxes(source, listId) {
+    const list = document.querySelector('[data-disposisi-list="' + listId + '"]');
+    if (!list) return;
+    list.querySelectorAll('[data-user-item="' + listId + '"]').forEach(function(item){
+        if (item.style.display !== 'none') {
+            const checkbox = item.querySelector('input[type="checkbox"]');
+            if (checkbox) checkbox.checked = source.checked;
+        }
+    });
+}
+
+document.addEventListener('input', function(e){
+    if (!e.target.classList.contains('disposisi-search-input')) return;
+    const listId = e.target.dataset.targetList;
+    const keyword = e.target.value.trim().toLowerCase();
+    const items = document.querySelectorAll('[data-user-item="' + listId + '"]');
+    let visibleCount = 0;
+    items.forEach(function(item){
+        const haystack = (item.dataset.searchText || '').toLowerCase();
+        const isVisible = haystack.includes(keyword);
+        item.style.display = isVisible ? '' : 'none';
+        if (isVisible) visibleCount++;
+    });
+    const empty = document.querySelector('[data-empty-list="' + listId + '"]');
+    if (empty) empty.style.display = visibleCount === 0 ? 'block' : 'none';
+    const checkAll = document.getElementById('checkAll_sm_' + listId);
+    if (checkAll) checkAll.checked = false;
+});
 
 // ============================================================
 // 11. OCR TRIGGER (sama persis dengan kode lama)
@@ -1360,4 +1758,64 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 });
 </script>
+
+<script>
+// ============================================================
+// UI Enhancement Surat Masuk: skeleton, loading state, feedback file
+// ============================================================
+(function(){
+    function ready(){ document.body.classList.add('sm-ready'); }
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        setTimeout(ready, 160);
+    } else {
+        document.addEventListener('DOMContentLoaded', function(){ setTimeout(ready, 160); });
+    }
+    window.addEventListener('load', ready);
+    setTimeout(ready, 2500); // fallback agar skeleton tidak pernah menggantung jika library eksternal lambat
+})();
+
+function showSmProcessing(message) {
+    const overlay = document.getElementById('smProcessingOverlay');
+    if (!overlay) return;
+    const text = overlay.querySelector('.sm-processing-box span:last-child');
+    if (text && message) text.textContent = message;
+    overlay.classList.add('show');
+}
+
+function setUploadFeedback(target, type, message) {
+    const box = document.querySelector('[data-upload-feedback="' + target + '"]');
+    if (!box) return;
+    box.className = 'sm-upload-feedback ' + (type === 'ok' ? 'is-ok' : 'is-error');
+    box.innerHTML = (type === 'ok' ? '<i class="fa-solid fa-check-circle me-1"></i>' : '<i class="fa-solid fa-triangle-exclamation me-1"></i>') + message;
+}
+
+function clearUploadFeedback(target) {
+    const box = document.querySelector('[data-upload-feedback="' + target + '"]');
+    if (!box) return;
+    box.className = 'sm-upload-feedback';
+    box.textContent = '';
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+    document.querySelectorAll('.js-loading-form').forEach(function(form){
+        form.addEventListener('submit', function(){
+            const submitter = document.activeElement && document.activeElement.matches('button, input[type="submit"]') ? document.activeElement : form.querySelector('button[type="submit"], input[type="submit"]');
+            if (submitter && submitter.name && !form.querySelector('input[type="hidden"][name="' + submitter.name + '"]')) {
+                const hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = submitter.name;
+                hidden.value = submitter.value || '1';
+                form.appendChild(hidden);
+            }
+            if (submitter && submitter.tagName === 'BUTTON') {
+                submitter.dataset.originalHtml = submitter.innerHTML;
+                submitter.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Memproses...';
+                submitter.disabled = true;
+            }
+            showSmProcessing('Memproses permintaan...');
+        });
+    });
+});
+</script>
+
 <?php include '../layouts/footer.php'; ?>
