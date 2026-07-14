@@ -1,10 +1,23 @@
 [Unit]
-Description=Telegram Worker
+Description=Telegram Worker SIMPERS
+After=network.target mariadb.service
 
 [Service]
-ExecStart=/usr/bin/php /var/www/simpers/worker_telegram.php
+Type=simple
+
+User=www-data
+
+WorkingDirectory=/var/www/html/simpers
+
+ExecStart=/usr/bin/php /var/www/html/simpers/worker_telegram.php
+
 Restart=always
+
 RestartSec=5
+
+StandardOutput=append:/var/www/html/simpers/logs/systemd.log
+
+StandardError=append:/var/www/html/simpers/logs/systemd_error.log
 
 [Install]
 WantedBy=multi-user.target
@@ -15,4 +28,6 @@ sudo systemctl daemon-reload
 
 sudo systemctl enable telegram-worker
 
-sudo systemctl start telegram-worker -->
+sudo systemctl start telegram-worker
+
+sudo systemctl status telegram-worker -->
