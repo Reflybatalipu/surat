@@ -143,7 +143,7 @@ ob_start();
 
     <div class="ttd-container">
         <div class="ttd-box">
-            Batudaa, <?= date('d F Y') ?><br>
+            Kota Tengah, <?= date('d F Y') ?><br>
             Mengetahui,<br>
             Kepala Sekolah<br>
             <br><br><br><br>
