@@ -1,77 +1,142 @@
 <?php
-$bot_token = "8750324075:AAGI3fu1xFQjf4bzzYKn6QuAbJlxUqY9xRA";
+declare(strict_types=1);
+$bot_token = '8750324075:AAGI3fu1xFQjf4bzzYKn6QuAbJlxUqY9xRA';
 
-function kirim_telegram($telegram_id, $pesan) {
-    global $bot_token; 
-    
-    // URL Endpoint API Telegram
-    $url = "https://api.telegram.org/bot" . $bot_token . "/sendMessage";
-    
-    // Data yang akan ditembakkan ke Telegram
-    $data = [
-        'chat_id' => $telegram_id,
-        'text' => $pesan,
-        'parse_mode' => 'markdown' 
-    ];
-    
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    
+function telegram_log(string $message): void
+{
+    $dir = __DIR__ . '/logs';
 
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0); // HARUS ANGKA 0, BUKAN false
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10); // Batas waktu tunggu agar website tidak ikut lag
-    
-    // Eksekusi pengiriman!
-    $hasil = curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
-    
-    // Fitur Log untuk mengecek alasan jika masih gagal
-    if ($hasil === false) {
-        error_log("Error Telegram: " . $error);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
     }
-    
-    return $hasil;
+    $logFile = $dir . '/telegram_worker.log';
+
+    file_put_contents(
+        $logFile,
+        '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL,
+        FILE_APPEND | LOCK_EX
+    );
 }
-
-
-function kirim_dokumen_telegram($chat_id, $file_path, $caption = "") {
+function telegram_request(string $method, array $data): bool
+{
     global $bot_token;
-    
-    if (empty($bot_token)) return false;
 
-    $url = "https://api.telegram.org/bot" . $bot_token . "/sendDocument";
-    
-    if (!file_exists($file_path)) return false;
-
-    $path_absolut = realpath($file_path);
-    if (!$path_absolut) return false;
-
-    $document = new CURLFile($path_absolut);
-
-    $data = [
-        'chat_id' => $chat_id,
-        'document' => $document,
-        'caption' => $caption,
-        'parse_mode' => 'Markdown'
-    ];
+    $url = "https://api.telegram.org/bot{$bot_token}/{$method}";
 
     $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    
-    // Samakan perbaikannya di sini
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0); 
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    
-    $hasil = curl_exec($ch);
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $data,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+        CURLOPT_USERAGENT => 'SIMPERS Telegram Worker/1.0'
+    ]);
+
+    $response = curl_exec($ch);
+
+    if ($response === false) {
+
+        telegram_log(
+            "CURL ERROR : " . curl_error($ch)
+        );
+
+        curl_close($ch);
+
+        return false;
+    }
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    
+    if ($httpCode != 200) {
+
+        telegram_log(
+            "HTTP ERROR : {$httpCode}"
+        );
+
+        return false;
+    }
+    $json = json_decode($response, true);
+
+    if (!is_array($json)) {
+
+        telegram_log(
+            "INVALID JSON : {$response}"
+        );
+        return false;
+    }
+    if (!isset($json['ok']) || $json['ok'] !== true) {
+
+        telegram_log(
+            "TELEGRAM ERROR : " .
+            ($json['description'] ?? 'Unknown Error')
+        );
+        return false;
+    }
+    return true;
+}
+function kirim_telegram(string $telegram_id, string $pesan): bool
+{
+    telegram_log(
+        "Mengirim pesan ke {$telegram_id}"
+    );
+    $hasil = telegram_request(
+        'sendMessage',
+        [
+            'chat_id' => $telegram_id,
+            'text' => $pesan,
+            'parse_mode' => 'Markdown'
+        ]
+    );
+    if ($hasil) {
+        telegram_log(
+            "SUKSES kirim pesan ke {$telegram_id}"
+        );
+    } else {
+        telegram_log(
+            "GAGAL kirim pesan ke {$telegram_id}"
+        );
+    }
     return $hasil;
 }
+function kirim_dokumen_telegram(
+    string $chat_id,
+    string $file_path,
+    string $caption = ''
+): bool {
+    if (!file_exists($file_path)) {
+        telegram_log(
+            "FILE TIDAK DITEMUKAN : {$file_path}"
+        );
+        return false;
+    }
+    $file = new CURLFile(realpath($file_path));
+    telegram_log(
+        "Mengirim dokumen ke {$chat_id}"
+    );
+
+    $hasil = telegram_request(
+        'sendDocument',
+        [
+            'chat_id' => $chat_id,
+            'document' => $file,
+            'caption' => $caption,
+            'parse_mode' => 'Markdown'
+        ]
+    );
+    if ($hasil) {
+        telegram_log(
+            "SUKSES kirim dokumen ke {$chat_id}"
+        );
+    } else {
+        telegram_log(
+            "GAGAL kirim dokumen ke {$chat_id}"
+        );
+    }
+    return $hasil;
+}
+
 ?>
