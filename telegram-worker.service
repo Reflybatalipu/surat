@@ -23,7 +23,16 @@ StandardError=append:/var/www/html/simpers/logs/systemd_error.log
 WantedBy=multi-user.target
 
 
-<!-- kemudian di terminal linuc jalankan perintah ini satu persatu
+<!--  File ini tidak berada di folder SIMPERS. Tetapi berada di Linux.
+
+Misalnya Ubuntu
+/etc/systemd/system/
+
+di dalamnya ada
+
+telegram-worker.servicekemudian di terminal linuc jalankan perintah ini satu persatu.
+jalankan perintah berikut dari terminal!
+
 sudo systemctl daemon-reload
 
 sudo systemctl enable telegram-worker
