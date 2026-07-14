@@ -1,0 +1,18 @@
+[Unit]
+Description=Telegram Worker
+
+[Service]
+ExecStart=/usr/bin/php /var/www/simpers/worker_telegram.php
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+
+<!-- kemudian di terminal linuc jalankan perintah ini satu persatu
+sudo systemctl daemon-reload
+
+sudo systemctl enable telegram-worker
+
+sudo systemctl start telegram-worker -->
