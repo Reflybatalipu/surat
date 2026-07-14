@@ -38,7 +38,7 @@ if ($filter_bulan != '') {
     $kondisi_where .= " AND MONTH(sk.created_at) = '$filter_bulan'";
 }
 if ($filter_klasifikasi != '') {
-    $kondisi_where .= " AND sk.klasifikasi = '$filter_klasifikasi'";
+    $kondisi_where .= " AND sk.nomor_surat LIKE '$filter_klasifikasi/%'";
 }
 if ($filter_status != '') {
     $kondisi_where .= " AND sk.status_workflow = '$filter_status'";
@@ -91,8 +91,81 @@ include '../layouts/header.php';
 .timeline-item::before { content: ''; position: absolute; top: 5px; left: -24px; width: 12px; height: 12px; border-radius: 50%; background: #17a2b8; border: 2px solid #fff; box-shadow: 0 0 0 2px #17a2b8; }
 .timeline-date { font-size: 0.85em; color: #6c757d; font-weight: bold; }
 .timeline-content { background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 5px; }
+
+/* ============================================================
+   SURAT KELUAR — UX REFINEMENT: skeleton, empty state, loading
+   ============================================================ */
+.sk-page-shell { position: relative; }
+.sk-skeleton-layer { display: none; }
+body.sk-ui-loading .sk-content-layer { display: none !important; }
+body.sk-ui-loading .sk-skeleton-layer { display: block; }
+.sk-skeleton-card { background: #fff; border-radius: 14px; border: 1px solid #edf1f7; box-shadow: 0 4px 18px rgba(15, 23, 42, .05); padding: 18px; margin-bottom: 18px; }
+.sk-skel { position: relative; overflow: hidden; background: #e9eef5; border-radius: 10px; min-height: 14px; }
+.sk-skel::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.72), transparent); animation: skShimmer 1.15s infinite; }
+.sk-skel-title { height: 28px; width: 240px; }
+.sk-skel-btn { height: 38px; width: 160px; border-radius: 9px; }
+.sk-skel-filter { height: 32px; width: 100%; }
+.sk-skel-row { height: 48px; width: 100%; margin-bottom: 12px; }
+.sk-skel-mobile-card { height: 150px; width: 100%; margin-bottom: 12px; border-radius: 16px; }
+@keyframes skShimmer { 100% { transform: translateX(100%); } }
+
+.sk-loading-backdrop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(248, 250, 252, .72); backdrop-filter: blur(3px); z-index: 3000; }
+body.sk-action-loading .sk-loading-backdrop { display: flex; }
+.sk-loading-box { background: #fff; border-radius: 16px; padding: 18px 22px; box-shadow: 0 18px 45px rgba(15, 23, 42, .15); display: flex; align-items: center; gap: 12px; font-weight: 700; color: #334155; }
+
+.sk-empty-state { padding: 58px 24px; text-align: center; color: #64748b; }
+.sk-empty-illustration { width: 88px; height: 88px; margin: 0 auto 16px; border-radius: 28px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #eaf0f8, #f8fafc); color: #4A70A9; font-size: 2.5rem; box-shadow: inset 0 0 0 1px #dbe5f2; }
+.sk-empty-title { font-weight: 800; color: #1f2937; margin-bottom: 4px; }
+.sk-empty-desc { max-width: 430px; margin: 0 auto 18px; font-size: .9rem; }
+.sk-file-error { display: none; color: #dc2626; font-size: .82rem; font-weight: 600; margin-top: 6px; }
+.sk-file-info { display: none; color: #4A70A9; font-size: .82rem; font-weight: 600; margin-top: 6px; }
+.is-invalid + .sk-file-error, .is-invalid ~ .sk-file-error { display: block; }
+.sk-action-pill { font-size: .72rem; border-radius: 99px; padding: 3px 9px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+.sk-pill-revisi { background: #fee2e2; color: #b91c1c; }
+.sk-pill-review { background: #fef3c7; color: #92400e; }
+.sk-pill-dialokasikan { background: #e0f2fe; color: #0369a1; }
+@media (max-width: 576px) {
+    .sk-skel-title { width: 150px; height: 24px; }
+    .sk-skel-btn { width: 120px; height: 34px; }
+    .sk-empty-state { padding: 44px 18px; }
+}
 </style>
 
+<script>document.body.classList.add('sk-ui-loading');</script>
+<div class="sk-loading-backdrop" aria-hidden="true">
+    <div class="sk-loading-box">
+        <span class="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true"></span>
+        <span>Memproses permintaan...</span>
+    </div>
+</div>
+
+<div class="sk-page-shell">
+    <div class="sk-skeleton-layer" aria-hidden="true">
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+            <div class="sk-skel sk-skel-title"></div>
+            <div class="sk-skel sk-skel-btn"></div>
+        </div>
+        <div class="sk-skeleton-card">
+            <div class="row g-2">
+                <div class="col-md-3"><div class="sk-skel sk-skel-filter"></div></div>
+                <div class="col-md-3"><div class="sk-skel sk-skel-filter"></div></div>
+                <div class="col-md-4"><div class="sk-skel sk-skel-filter"></div></div>
+                <div class="col-md-2"><div class="sk-skel sk-skel-filter"></div></div>
+            </div>
+        </div>
+        <div class="sk-skeleton-card d-none d-md-block">
+            <?php for($i=0; $i<6; $i++): ?>
+                <div class="sk-skel sk-skel-row"></div>
+            <?php endfor; ?>
+        </div>
+        <div class="d-block d-md-none">
+            <?php for($i=0; $i<4; $i++): ?>
+                <div class="sk-skel sk-skel-mobile-card"></div>
+            <?php endfor; ?>
+        </div>
+    </div>
+
+    <div class="sk-content-layer">
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
     <h4 class="fw-bold text-dark mb-0"><i class="fa-solid fa-paper-plane me-2 text-primary"></i> Data Surat Keluar</h4>
     
@@ -103,7 +176,7 @@ include '../layouts/header.php';
 
 <div class="card border-0 shadow-sm rounded-3 mb-4">
     <div class="card-body p-3 bg-light border-bottom">
-        <form method="GET" action="surat_keluar.php" class="row g-2 align-items-center">
+        <form method="GET" action="surat_keluar.php" class="row g-2 align-items-center js-sk-loading-form" id="formFilterSuratKeluar">
             <div class="col-md-3">
                 <select name="filter_bulan" class="form-select form-select-sm">
                     <option value="">-- Semua Bulan --</option>
@@ -144,7 +217,7 @@ include '../layouts/header.php';
             </div>
 
             <div class="col-md-2 d-grid gap-1 d-md-flex">
-                <button type="submit" class="btn btn-sm btn-secondary flex-grow-1" title="Terapkan Filter"><i class="fa-solid fa-filter"></i></button>
+                <button type="submit" class="btn btn-sm btn-secondary flex-grow-1" title="Terapkan Filter" data-loading-text="Memfilter..."><i class="fa-solid fa-filter"></i></button>
                 <a href="surat_keluar.php" class="btn btn-sm btn-outline-danger flex-grow-1" title="Reset Filter"><i class="fa-solid fa-rotate-left"></i></a>
             </div>
         </form>
@@ -169,9 +242,16 @@ include '../layouts/header.php';
             <?php endif; ?>
         </div>
         <?php if (empty($data_surat)): ?>
-            <div class='text-center py-5 text-muted'>
-                <i class='fa-solid fa-folder-open fs-1 d-block mb-3 text-light'></i> 
-                Belum ada data surat keluar atau pengajuan.
+            <div class="sk-empty-state">
+                <div class="sk-empty-illustration">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </div>
+                <div class="sk-empty-title">Belum ada surat keluar</div>
+                <p class="sk-empty-desc">Data surat keluar belum tersedia untuk filter yang dipilih. Ambil nomor baru atau reset filter untuk melihat data lainnya.</p>
+                <div class="d-flex justify-content-center gap-2 flex-wrap">
+                    <a href="ambil_nomor.php" class="btn btn-primary btn-sm fw-bold"><i class="fa-solid fa-ticket me-1"></i> Ambil Nomor Baru</a>
+                    <a href="surat_keluar.php" class="btn btn-outline-secondary btn-sm"><i class="fa-solid fa-rotate-left me-1"></i> Reset Filter</a>
+                </div>
             </div>
         <?php else: ?>
 
@@ -218,7 +298,16 @@ include '../layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td class="small text-muted"><i class="fa-solid fa-user me-1"></i> <?= $data['pembuat']; ?></td>
-                            <td><span class="badge <?= $warna_status; ?> px-2 py-1"><?= $data['status_workflow']; ?></span></td>
+                            <td>
+                                <span class="badge <?= $warna_status; ?> px-2 py-1"><?= $data['status_workflow']; ?></span>
+                                <?php if($data['status_workflow'] == 'Revisi' && $data['draft_by'] == $user_id_sekarang): ?>
+                                    <div class="mt-1"><span class="sk-action-pill sk-pill-revisi"><i class="fa-solid fa-circle-exclamation"></i> Perlu revisi</span></div>
+                                <?php elseif($data['status_workflow'] == 'Review'): ?>
+                                    <div class="mt-1"><span class="sk-action-pill sk-pill-review"><i class="fa-solid fa-hourglass-half"></i> Menunggu review</span></div>
+                                <?php elseif($data['status_workflow'] == 'Dialokasikan' && $data['draft_by'] == $user_id_sekarang): ?>
+                                    <div class="mt-1"><span class="sk-action-pill sk-pill-dialokasikan"><i class="fa-solid fa-file-arrow-up"></i> Perlu dilengkapi</span></div>
+                                <?php endif; ?>
+                            </td>
                             <td class="text-center">
                                 <?php if(!empty($data['file_path'])): ?>
                                 <button type="button" 
@@ -236,7 +325,7 @@ include '../layouts/header.php';
 
                                 <?php if(($data['status_workflow'] == 'Draft' || $data['status_workflow'] == 'Revisi') && $data['draft_by'] == $user_id_sekarang): ?>
                                     <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalEdit_<?= $data['id']; ?>" title="Edit Draft"><i class="fa-solid fa-pen-to-square"></i></button>
-                                    <a href="aksi_surat_keluar.php?aksi=ajukan&id=<?= $data['id']; ?>" class="btn btn-sm btn-outline-success" onclick="return confirm('Yakin ingin mengajukan draf ini ke Kepala Sekolah?');" title="Ajukan"><i class="fa-solid fa-paper-plane"></i></a>
+                                    <a href="aksi_surat_keluar.php?aksi=ajukan&id=<?= $data['id']; ?>" class="btn btn-sm btn-outline-success" onclick="return skConfirmAction(this, 'Yakin ingin mengajukan draf ini ke Kepala Sekolah?', 'Mengajukan...');" title="Ajukan"><i class="fa-solid fa-paper-plane"></i></a>
                                 <?php endif; ?>
 
                                 <?php if($role_sekarang == 'Kepala_Sekolah' && $data['status_workflow'] == 'Review'): ?>
@@ -244,9 +333,9 @@ include '../layouts/header.php';
                                 <?php endif; ?>
 
                                 <?php if ($role_sekarang != 'Kepala_Sekolah' && $data['status_workflow'] == 'Approved'): ?>
-                                    <form action="aksi_surat_keluar.php" method="POST" class="d-inline">
+                                    <form action="aksi_surat_keluar.php" method="POST" class="d-inline js-sk-loading-form">
                                         <input type="hidden" name="id_surat" value="<?= $data['id']; ?>">
-                                        <button type="submit" name="tandai_terkirim" class="btn btn-sm btn-primary" onclick="return confirm('Tandai sudah terkirim?');" title="Tandai Terkirim"><i class="fa-solid fa-check-double"></i></button>
+                                        <button type="submit" name="tandai_terkirim" class="btn btn-sm btn-primary" onclick="return confirm('Tandai sudah terkirim?');" title="Tandai Terkirim" data-loading-text="Menandai..."><i class="fa-solid fa-check-double"></i></button>
                                     </form>
                                 <?php endif; ?>
                             </td>
@@ -276,6 +365,13 @@ include '../layouts/header.php';
                             <span class="fw-bold text-primary font-monospace" style="font-size: 0.85rem;"><?= $data['nomor_surat'] ?: 'Draft'; ?></span>
                             <span class="badge <?= $warna_status; ?>" style="font-size: 0.7rem;"><?= $data['status_workflow']; ?></span>
                         </div>
+                        <?php if($data['status_workflow'] == 'Revisi' && $data['draft_by'] == $user_id_sekarang): ?>
+                            <div class="mb-2"><span class="sk-action-pill sk-pill-revisi"><i class="fa-solid fa-circle-exclamation"></i> Perlu revisi</span></div>
+                        <?php elseif($data['status_workflow'] == 'Review'): ?>
+                            <div class="mb-2"><span class="sk-action-pill sk-pill-review"><i class="fa-solid fa-hourglass-half"></i> Menunggu review</span></div>
+                        <?php elseif($data['status_workflow'] == 'Dialokasikan' && $data['draft_by'] == $user_id_sekarang): ?>
+                            <div class="mb-2"><span class="sk-action-pill sk-pill-dialokasikan"><i class="fa-solid fa-file-arrow-up"></i> Perlu dilengkapi</span></div>
+                        <?php endif; ?>
                         
                         <div class="d-flex align-items-start mb-2">
                             <div class="bg-primary bg-opacity-10 text-primary rounded-circle d-flex justify-content-center align-items-center me-3 flex-shrink-0" style="width: 45px; height: 45px;">
@@ -311,7 +407,7 @@ include '../layouts/header.php';
 
                             <?php if(($data['status_workflow'] == 'Draft' || $data['status_workflow'] == 'Revisi') && $data['draft_by'] == $user_id_sekarang): ?>
                                 <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalEdit_<?= $data['id']; ?>"><i class="fa-solid fa-pen-to-square"></i></button>
-                                <a href="aksi_surat_keluar.php?aksi=ajukan&id=<?= $data['id']; ?>" class="btn btn-sm btn-outline-success" onclick="return confirm('Ajukan ke Kepala Sekolah?');"><i class="fa-solid fa-paper-plane"></i></a>
+                                <a href="aksi_surat_keluar.php?aksi=ajukan&id=<?= $data['id']; ?>" class="btn btn-sm btn-outline-success" onclick="return skConfirmAction(this, 'Ajukan ke Kepala Sekolah?', 'Mengajukan...');"><i class="fa-solid fa-paper-plane"></i></a>
                             <?php endif; ?>
 
                             <?php if($role_sekarang == 'Kepala_Sekolah' && $data['status_workflow'] == 'Review'): ?>
@@ -319,9 +415,9 @@ include '../layouts/header.php';
                             <?php endif; ?>
 
                             <?php if ($role_sekarang != 'Kepala_Sekolah' && $data['status_workflow'] == 'Approved'): ?>
-                                <form action="aksi_surat_keluar.php" method="POST" class="d-inline">
+                                <form action="aksi_surat_keluar.php" method="POST" class="d-inline js-sk-loading-form">
                                     <input type="hidden" name="id_surat" value="<?= $data['id']; ?>">
-                                    <button type="submit" name="tandai_terkirim" class="btn btn-sm btn-primary" onclick="return confirm('Tandai terkirim?');"><i class="fa-solid fa-check-double"></i></button>
+                                    <button type="submit" name="tandai_terkirim" class="btn btn-sm btn-primary" onclick="return confirm('Tandai terkirim?');" data-loading-text="Menandai..."><i class="fa-solid fa-check-double"></i></button>
                                 </form>
                             <?php endif; ?>
                         </div>
@@ -332,6 +428,9 @@ include '../layouts/header.php';
             </div>
 
         <?php endif; ?>
+    </div>
+</div>
+
     </div>
 </div>
 
@@ -402,7 +501,7 @@ include '../layouts/header.php';
                     <h5 class="modal-title fw-bold text-dark"><i class="fa-solid fa-file-arrow-up me-2"></i> Lengkapi Dokumen</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form action="aksi_surat_keluar.php" method="POST" enctype="multipart/form-data">
+                <form action="aksi_surat_keluar.php" method="POST" enctype="multipart/form-data" class="js-sk-loading-form">
                     <div class="modal-body">
                         <input type="hidden" name="id_surat" value="<?= $data['id']; ?>">
                         <div class="alert alert-light border small mb-3">
@@ -427,13 +526,15 @@ include '../layouts/header.php';
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-bold">Upload File PDF <span class="text-danger">*</span></label>
-                            <input type="file" class="form-control" name="file_surat" accept="application/pdf" required>
+                            <input type="file" class="form-control js-pdf-input" name="file_surat" accept="application/pdf" required data-max-size="5242880">
                             <small class="text-muted">Pastikan file berisi nomor surat di atas.</small>
+                            <div class="sk-file-info"></div>
+                            <div class="sk-file-error">File wajib PDF dan maksimal 5 MB.</div>
                         </div>
                     </div>
                     <div class="modal-footer bg-light">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-                        <button type="submit" name="lengkapi_surat" class="btn btn-primary fw-bold"><i class="fa-solid fa-save me-1"></i> Simpan Draft</button>
+                        <button type="submit" name="lengkapi_surat" class="btn btn-primary fw-bold" data-loading-text="Menyimpan..."><i class="fa-solid fa-save me-1"></i> Simpan Draft</button>
                     </div>
                 </form>
             </div>
@@ -449,7 +550,7 @@ include '../layouts/header.php';
                     <h5 class="modal-title fw-bold"><i class="fa-solid fa-pen-to-square me-2"></i>Edit Draft</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form action="aksi_surat_keluar.php" method="POST" enctype="multipart/form-data">
+                <form action="aksi_surat_keluar.php" method="POST" enctype="multipart/form-data" class="js-sk-loading-form">
                     <div class="modal-body">
                         <input type="hidden" name="id_surat" value="<?= $data['id']; ?>">
                         <input type="hidden" name="file_lama" value="<?= $data['file_path']; ?>">
@@ -478,12 +579,14 @@ include '../layouts/header.php';
                         </div>
                         <div class="mb-3 border rounded p-3 bg-light">
                             <label class="form-label fw-bold">Ganti Dokumen PDF (Opsional)</label>
-                            <input type="file" class="form-control" name="file_surat" accept="application/pdf">
+                            <input type="file" class="form-control js-pdf-input" name="file_surat" accept="application/pdf" data-max-size="5242880">
+                            <div class="sk-file-info"></div>
+                            <div class="sk-file-error">File wajib PDF dan maksimal 5 MB.</div>
                         </div>
                     </div>
                     <div class="modal-footer bg-light">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-                        <button type="submit" name="edit_draft" class="btn btn-primary fw-bold"><i class="fa-solid fa-save me-1"></i> Simpan Perubahan</button>
+                        <button type="submit" name="edit_draft" class="btn btn-primary fw-bold" data-loading-text="Menyimpan..."><i class="fa-solid fa-save me-1"></i> Simpan Perubahan</button>
                     </div>
                 </form>
             </div>
@@ -499,7 +602,7 @@ include '../layouts/header.php';
                 <h5 class="modal-title fw-bold"><i class="fa-solid fa-signature me-2"></i>Review & Persetujuan</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <form action="aksi_surat_keluar.php" method="POST" enctype="multipart/form-data">
+            <form action="aksi_surat_keluar.php" method="POST" enctype="multipart/form-data" class="js-sk-loading-form">
                 <div class="modal-body">
                     <input type="hidden" name="id_surat" value="<?= $data['id']; ?>">
                     
@@ -529,8 +632,10 @@ include '../layouts/header.php';
                         <textarea name="catatan_revisi" class="form-control border-danger mb-3" rows="3" placeholder="Sebutkan bagian yang salah."></textarea>
                         
                         <label class="form-label fw-bold small text-secondary">Upload Hasil Coretan (Jika ada)</label>
-                        <input type="file" name="file_revisi" class="form-control form-control-sm border-danger" accept=".pdf">
+                        <input type="file" name="file_revisi" class="form-control form-control-sm border-danger js-pdf-input" accept=".pdf,application/pdf" data-max-size="5242880">
                         <div class="form-text small">Unggah file PDF yang sudah di-download dari menu "Buka Dokumen" di atas.</div>
+                        <div class="sk-file-info"></div>
+                        <div class="sk-file-error">File revisi wajib PDF dan maksimal 5 MB.</div>
                     </div>
 
                     <div id="form_approved_<?= $data['id']; ?>" style="display: none;" class="p-3 bg-light border rounded">
@@ -554,7 +659,7 @@ include '../layouts/header.php';
                 </div>
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
-                    <button type="submit" name="proses_review" class="btn btn-success fw-bold"><i class="fa-solid fa-check me-1"></i> Proses</button>
+                    <button type="submit" name="proses_review" class="btn btn-success fw-bold" data-loading-text="Memproses..."><i class="fa-solid fa-check me-1"></i> Proses</button>
                 </div>
             </form>
         </div>
@@ -716,6 +821,106 @@ function toggleApprovalFields(selectObj, id) {
         textareaRevisi.removeAttribute('required');
     }
 }
+</script>
+
+
+<script>
+// ============================================================
+// SURAT KELUAR — Skeleton, loading state, and PDF client check
+// ============================================================
+document.addEventListener('DOMContentLoaded', function () {
+    document.body.classList.remove('sk-ui-loading');
+
+    const forms = document.querySelectorAll('.js-sk-loading-form');
+    forms.forEach(function(form){
+        form.addEventListener('submit', function(e){
+            if (!form.checkValidity()) return;
+
+            const invalidFile = form.querySelector('.js-pdf-input.is-invalid');
+            if (invalidFile) {
+                e.preventDefault();
+                invalidFile.focus();
+                return false;
+            }
+
+            const submitter = e.submitter || form.querySelector('button[type="submit"]');
+            if (submitter && submitter.name && !form.querySelector('input[type="hidden"][data-submit-clone="' + submitter.name + '"]')) {
+                const hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = submitter.name;
+                hidden.value = submitter.value || '1';
+                hidden.setAttribute('data-submit-clone', submitter.name);
+                form.appendChild(hidden);
+            }
+
+            if (submitter) {
+                const loadingText = submitter.getAttribute('data-loading-text') || 'Memproses...';
+                submitter.dataset.originalHtml = submitter.innerHTML;
+                submitter.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + loadingText;
+                submitter.disabled = true;
+            }
+
+            document.body.classList.add('sk-action-loading');
+        });
+    });
+
+    document.querySelectorAll('.js-pdf-input').forEach(function(input){
+        input.addEventListener('change', function(){
+            validatePdfInput(input);
+        });
+    });
+});
+
+function validatePdfInput(input) {
+    const file = input.files && input.files[0] ? input.files[0] : null;
+    const maxSize = parseInt(input.getAttribute('data-max-size') || '5242880', 10);
+    const wrapper = input.parentElement;
+    const errorEl = wrapper ? wrapper.querySelector('.sk-file-error') : null;
+    const infoEl = wrapper ? wrapper.querySelector('.sk-file-info') : null;
+
+    input.classList.remove('is-invalid');
+    if (errorEl) errorEl.style.display = 'none';
+    if (infoEl) { infoEl.style.display = 'none'; infoEl.textContent = ''; }
+
+    if (!file) return true;
+
+    const name = file.name.toLowerCase();
+    const isPdf = file.type === 'application/pdf' || name.endsWith('.pdf');
+    const isValidSize = file.size <= maxSize;
+
+    if (!isPdf || !isValidSize) {
+        input.value = '';
+        input.classList.add('is-invalid');
+        if (errorEl) {
+            errorEl.textContent = !isPdf ? 'Format file tidak valid. Wajib PDF.' : 'Ukuran file terlalu besar. Maksimal 5 MB.';
+            errorEl.style.display = 'block';
+        }
+        return false;
+    }
+
+    if (infoEl) {
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+        infoEl.textContent = 'File terpilih: ' + file.name + ' (' + sizeMb + ' MB)';
+        infoEl.style.display = 'block';
+    }
+    return true;
+}
+
+function skConfirmAction(el, message, loadingText) {
+    if (!confirm(message)) return false;
+    if (el) {
+        el.classList.add('disabled');
+        el.setAttribute('aria-disabled', 'true');
+        el.dataset.originalHtml = el.innerHTML;
+        el.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + (loadingText || 'Memproses...');
+    }
+    document.body.classList.add('sk-action-loading');
+    return true;
+}
+
+window.addEventListener('pageshow', function(){
+    document.body.classList.remove('sk-action-loading');
+});
 </script>
 
 <?php include '../layouts/footer.php'; ?>
