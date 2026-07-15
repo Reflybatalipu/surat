@@ -11,6 +11,12 @@ if (!isset($_SESSION['status_login']) || $_SESSION['status_login'] !== true) {
 $user_id_sekarang = $_SESSION['user_id'];
 $role_sekarang = $_SESSION['nama_role'];
 
+// 🛡️ CSRF token untuk semua form POST di halaman ini
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+
 // Helper tampilan status OCR agar konsisten di tabel dan kartu mobile
 function renderOcrBadge($status_ocr) {
     $status = strtolower(trim((string)$status_ocr));
@@ -26,7 +32,16 @@ function renderOcrBadge($status_ocr) {
     return '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle mt-1"><i class="fa-regular fa-clock me-1"></i>OCR antrean</span>';
 }
 
-// 🔍 TANGKAP KATA KUNCI PENCARIAN
+// Escaping aman untuk nilai yang disisipkan ke dalam string JS
+// yang berada di dalam atribut HTML (mis. onclick="fungsi('...')").
+// addslashes() saja TIDAK cukup: HTML tidak mengenal escape backslash,
+// jadi tanda kutip literal tetap bisa memutus atribut. Karena itu hasil
+// addslashes() masih perlu di-htmlspecialchars() dengan ENT_QUOTES.
+function jsAttr($value) {
+    return htmlspecialchars(addslashes((string)$value), ENT_QUOTES, 'UTF-8');
+}
+
+
 $keyword = "";
 $query_pencarian = "";
 if (isset($_GET['cari']) && $_GET['cari'] != '') {
@@ -431,22 +446,22 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                         ?>
                         <tr>
                             <td class="ps-3">
-                                <div class="fw-bold font-monospace text-primary" style="font-size:0.9rem;"><?= $data['nomor_surat']; ?></div>
+                                <div class="fw-bold font-monospace text-primary" style="font-size:0.9rem;"><?= htmlspecialchars($data['nomor_surat']); ?></div>
                                 <div class="text-muted small"><i class="fa-regular fa-calendar me-1"></i> <?= date('d/m/Y', strtotime($data['tanggal_surat'])); ?></div>
                             </td>
-                            <td class="small text-muted"><?= $data['pengirim']; ?></td>
+                            <td class="small text-muted"><?= htmlspecialchars($data['pengirim']); ?></td>
                             <td style="font-size:0.9rem;">
-                                <?= $data['perihal']; ?>
+                                <?= htmlspecialchars($data['perihal']); ?>
                                 <?php if(!empty($data['ocr_text']) && $keyword != '' && stripos($data['ocr_text'], $keyword) !== false): ?>
                                     <br><span class="badge bg-light text-primary border border-primary mt-1 small" title="Kata kunci ditemukan di dalam gambar fisik surat"><i class="fa-solid fa-microchip me-1"></i> Ditemukan via OCR</span>
                                 <?php endif; ?>
                                 <div class="sm-ocr-row"><?= renderOcrBadge($data['status_ocr'] ?? '') ?></div>
                             </td>
                             <td>
-                                <div class="fw-bold <?= $warna_sifat; ?> small"><i class="fa-solid fa-shield-halved me-1"></i> <?= $data['klasifikasi']; ?></div>
-                                <div class="text-muted small">Tujuan: <?= $data['nama_unit'] ?? 'Belum ditentukan'; ?></div>
+                                <div class="fw-bold <?= $warna_sifat; ?> small"><i class="fa-solid fa-shield-halved me-1"></i> <?= htmlspecialchars($data['klasifikasi']); ?></div>
+                                <div class="text-muted small">Tujuan: <?= htmlspecialchars($data['nama_unit'] ?? 'Belum ditentukan'); ?></div>
                             </td>
-                            <td><span class="badge <?= $warna_status; ?>"><?= $data['status_workflow']; ?></span><?php if($_SESSION['nama_role'] == 'Admin_TU' && $data['status_workflow'] == 'Baru'): ?><div class="mt-1"><span class="sm-action-needed"><i class="fa-solid fa-bolt"></i> Perlu disposisi</span></div><?php endif; ?></td>
+                            <td><span class="badge <?= $warna_status; ?>"><?= htmlspecialchars($data['status_workflow']); ?></span><?php if($_SESSION['nama_role'] == 'Admin_TU' && $data['status_workflow'] == 'Baru'): ?><div class="mt-1"><span class="sm-action-needed"><i class="fa-solid fa-bolt"></i> Perlu disposisi</span></div><?php endif; ?></td>
                             <td class="text-center">
                                 
                                 <button class="btn btn-sm btn-info text-white" data-bs-toggle="modal" data-bs-target="#modalTimeline<?= $data['id']; ?>" title="Lacak Jejak Surat">
@@ -488,8 +503,8 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                 <div class="card border-0 shadow-sm rounded-4 mb-3">
                     <div class="card-body p-3">
                         <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span class="fw-bold text-primary font-monospace" style="font-size: 0.85rem;"><?= $data['nomor_surat']; ?></span>
-                            <span class="badge <?= $warna_status; ?>" style="font-size: 0.7rem;"><?= $data['status_workflow']; ?></span>
+                            <span class="fw-bold text-primary font-monospace" style="font-size: 0.85rem;"><?= htmlspecialchars($data['nomor_surat']); ?></span>
+                            <span class="badge <?= $warna_status; ?>" style="font-size: 0.7rem;"><?= htmlspecialchars($data['status_workflow']); ?></span>
                         </div>
                         
                         <div class="d-flex align-items-start mb-3">
@@ -499,10 +514,10 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                             
                             <div class="flex-grow-1 overflow-hidden">
                                 <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 0.95rem;">
-                                    <?= $data['perihal']; ?>
+                                    <?= htmlspecialchars($data['perihal']); ?>
                                 </h6>
                                 <div class="text-muted small mb-1 text-truncate">
-                                    <i class="fa-solid fa-building me-1"></i> <?= $data['pengirim']; ?>
+                                    <i class="fa-solid fa-building me-1"></i> <?= htmlspecialchars($data['pengirim']); ?>
                                 </div>
                                 <div class="text-muted small">
                                     <i class="fa-regular fa-calendar me-1"></i> <?= date('d/m/Y', strtotime($data['tanggal_surat'])); ?>
@@ -516,7 +531,7 @@ body.sm-ready #smPageSkeleton { display: none !important; }
 
                         <div class="d-flex justify-content-between align-items-center bg-light p-2 rounded-3">
                             <div class="small fw-bold <?= $warna_sifat; ?>">
-                                <i class="fa-solid fa-shield-halved me-1"></i> <?= $data['klasifikasi']; ?>
+                                <i class="fa-solid fa-shield-halved me-1"></i> <?= htmlspecialchars($data['klasifikasi']); ?>
                             </div>
                             <div class="d-flex gap-1">
                                 <button class="btn btn-sm btn-info text-white" data-bs-toggle="modal" data-bs-target="#modalTimeline<?= $data['id']; ?>" title="Lacak Jejak">
@@ -554,9 +569,9 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                 </div>
                 <div class="modal-body">
                     <div class="alert alert-light border small mb-4">
-                        <strong>Nomor Surat:</strong> <?= $data['nomor_surat']; ?><br>
-                        <strong>Perihal:</strong> <?= $data['perihal']; ?><br>
-                        <strong>Status Saat Ini:</strong> <span class="badge bg-primary"><?= $data['status_workflow']; ?></span>
+                        <strong>Nomor Surat:</strong> <?= htmlspecialchars($data['nomor_surat']); ?><br>
+                        <strong>Perihal:</strong> <?= htmlspecialchars($data['perihal']); ?><br>
+                        <strong>Status Saat Ini:</strong> <span class="badge bg-primary"><?= htmlspecialchars($data['status_workflow']); ?></span>
                     </div>
                     
                     <div class="timeline-track">
@@ -718,17 +733,18 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body bg-light">
-                        <input type="hidden" name="id_surat" value="<?= $data['id'] ?? ''; ?>">
-                        <input type="hidden" name="file_lama" value="<?= $data['file_path'] ?? ''; ?>">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']); ?>">
+                        <input type="hidden" name="id_surat" value="<?= htmlspecialchars($data['id'] ?? ''); ?>">
+                        <input type="hidden" name="file_lama" value="<?= htmlspecialchars($data['file_path'] ?? ''); ?>">
 
                         <div class="row bg-white p-3 rounded shadow-sm mb-3">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold small">Nomor Surat</label>
-                                <input type="text" class="form-control" name="nomor_surat" value="<?= $data['nomor_surat'] ?? ''; ?>" required>
+                                <input type="text" class="form-control" name="nomor_surat" value="<?= htmlspecialchars($data['nomor_surat'] ?? ''); ?>" required>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold small">Pengirim</label>
-                                <input type="text" class="form-control" name="pengirim" value="<?= $data['pengirim']; ?>" required>
+                                <input type="text" class="form-control" name="pengirim" value="<?= htmlspecialchars($data['pengirim']); ?>" required>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold small">Tanggal Surat</label>
@@ -740,7 +756,7 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                             </div>
                             <div class="col-md-12 mb-3">
                                 <label class="form-label fw-bold small">Perihal</label>
-                                <textarea class="form-control" name="perihal" rows="2" required><?= $data['perihal']; ?></textarea>
+                                <textarea class="form-control" name="perihal" rows="2" required><?= htmlspecialchars($data['perihal']); ?></textarea>
                             </div>
                         </div>
 
@@ -799,7 +815,7 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                 
                 <?php if(!empty($file_utama)): ?>
                      <div class="d-flex align-items-center p-2 border rounded mb-4 bg-white hover-shadow">
-                        <div class="flex-grow-1 d-flex align-items-center overflow-hidden" onclick="bukaPreviewPDF('<?= $data['file_path']; ?>')" style="cursor: pointer;">
+                        <div class="flex-grow-1 d-flex align-items-center overflow-hidden" onclick="bukaPreviewPDF('<?= jsAttr($data['file_path']); ?>')" style="cursor: pointer;">
                             <i class="fa-solid fa-file-pdf text-danger fs-3 me-3"></i>
                             <div class="text-truncate">
                                 <span class="d-block fw-bold text-primary">Lihat Surat Utama</span>
@@ -808,7 +824,7 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                         </div>
                         <div class="ms-2 border-start ps-2">
                             <button type="button" 
-                            onclick="bukaPDF('<?= $data['file_path']; ?>')" 
+                            onclick="bukaPDF('<?= jsAttr($data['file_path']); ?>')" 
                             class="btn btn-outline-primary w-100 mb-4 text-start">
                         <i class="fa-solid fa-cloud-arrow-down fs-5"></i>
                     </button>
@@ -822,40 +838,41 @@ body.sm-ready #smPageSkeleton { display: none !important; }
 
                                 <h6 class="fw-bold text-muted border-bottom pb-2 mb-3 mt-3">Lampiran Pendukung</h6>
                 <?php 
-                    $id_sm = $data['id'] ?? 0;
+                    $id_sm = $data['id'] ?? 0; 
+
                     if (isset($lampiran_surat[$id_sm]) && is_array($lampiran_surat[$id_sm]) && count($lampiran_surat[$id_sm]) > 0): 
                         foreach($lampiran_surat[$id_sm] as $lamp): 
-                            // 1. Ambil nilai database (sesuaikan dengan nama kolom asli di DB Anda)
-                            $nama_file_db = $lamp['file_path'] ?? $lamp['path_file'] ?? '';
+                            // 1. Ambil nilai nama file dari database
+                            $nama_file_db = $lamp['file_path'] ?? $lamp['path_file'] ?? ''; 
 
-                            // 2. Bersihkan dan bangun path yang benar
-                            if (!empty($nama_file_db)) {
-                                // Jika di DB sudah ada kata 'uploads/', jangan ditambah lagi. Jika belum ada, baru ditambah prefix.
-                                if (strpos($nama_file_db, 'uploads/') !== false) {
-                                    $path_lampiran = '../' . ltrim($nama_file_db, './'); 
-                                } else {
-                                    $path_lampiran = '../uploads/surat_masuk/' . $nama_file_db;
-                                }
-                            } else {
-                                $path_lampiran = '#';
-                            }
+                            // 2. Bersihkan dan bangun path publik untuk URL
+                            if (!empty($nama_file_db)) { 
+                                // Ambil hanya nama filenya saja jika path di DB mengandung folder
+                                $nama_file_murni = basename($nama_file_db);
+
+                                // Sesuaikan dengan folder tempat file PDF Anda benar-benar berada di hosting
+                                // Jika berada di folder 'uploads', gunakan baris ini:
+                                $path_lampiran = '' . $nama_file_murni; 
+                            } else { 
+                                $path_lampiran = '#'; 
+                            } 
                     ?>
 
                     <div class="d-flex align-items-center p-2 border rounded mb-2 bg-white hover-shadow">
                         <!-- Area Klik Kiri: Buka Preview -->
                         <div class="flex-grow-1 d-flex align-items-center overflow-hidden" 
-                             onclick="bukaPreviewPDF('<?= addslashes($path_lampiran); ?>')" 
+                             onclick="bukaPreviewPDF('<?= jsAttr($path_lampiran); ?>')" 
                              style="cursor: pointer;">
                             <i class="fa-solid fa-file-pdf text-danger fs-3 me-3"></i>
                             <div class="text-truncate">
-                                <span class="d-block fw-bold text-primary"><?= htmlspecialchars($lamp['nama_file'] ?? 'Lampiran'); ?></span>
-                                <small class="text-muted text-truncate"><?= htmlspecialchars($path_lampiran); ?></small>
+                                <span class="d-block fw-bold text-primary">Lihat Surat Utama</span>
+                                <small class="text-muted text-truncate"><?= htmlspecialchars($lamp['nama_file'] ?? 'Lampiran'); ?></small>
                             </div>
                         </div>
                         <!-- Area Klik Kanan: Tombol Aksi Buka/Download -->
                         <div class="ms-2 border-start ps-2">
                             <button type="button" 
-                                    onclick="bukaPDF('<?= addslashes($path_lampiran); ?>')" 
+                                    onclick="bukaPDF('<?= jsAttr($path_lampiran); ?>')" 
                                     class="btn btn-outline-primary">
                                 <i class="fa-solid fa-cloud-arrow-down fs-5"></i>
                             </button>
@@ -887,10 +904,11 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
-                        <input type="hidden" name="surat_id" value="<?= $data['id']; ?>">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']); ?>">
+                        <input type="hidden" name="surat_id" value="<?= htmlspecialchars($data['id']); ?>">
                         <div class="alert alert-secondary py-2 small mb-3">
-                            <i class="fa-solid fa-file-lines me-1"></i> <strong><?= $data['nomor_surat']; ?></strong><br>
-                            Pengirim: <?= $data['pengirim']; ?>
+                            <i class="fa-solid fa-file-lines me-1"></i> <strong><?= htmlspecialchars($data['nomor_surat']); ?></strong><br>
+                            Pengirim: <?= htmlspecialchars($data['pengirim']); ?>
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-bold">Teruskan Kepada</label>
@@ -951,8 +969,9 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
-                        <input type="hidden" name="id" value="<?= $data['id']; ?>">
-                        <p>Yakin ingin menghapus surat nomor <strong><?= $data['nomor_surat']; ?></strong>?</p>
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']); ?>">
+                        <input type="hidden" name="id" value="<?= htmlspecialchars($data['id']); ?>">
+                        <p>Yakin ingin menghapus surat nomor <strong><?= htmlspecialchars($data['nomor_surat']); ?></strong>?</p>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
@@ -975,6 +994,7 @@ body.sm-ready #smPageSkeleton { display: none !important; }
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body bg-light">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']); ?>">
                     <div class="row bg-white p-3 rounded shadow-sm mb-3">
                         <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">Informasi Surat</h6>
                         <div class="col-md-6 mb-3">
