@@ -1,6 +1,6 @@
 <?php
 // Ganti dengan token kamu
-$bot_token = "8750324075:AAGI3fu1xFQjf4bzzYKn6QuAbJlxUqY9xRA";
+$bot_token = "TOKEN-BOT";
 // Ganti dengan ID Telegram kamu
 $chat_id = "ISI_DENGAN_ID_TELEGRAM_KAMU"; 
 
