@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-$bot_token = '8750324075:AAGI3fu1xFQjf4bzzYKn6QuAbJlxUqY9xRA';
+$bot_token = 'TOKEN-BOT';
 
 function telegram_log(string $message): void
 {
